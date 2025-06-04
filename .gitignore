@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.millennium/
+.vscode/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+backend/__pycache__/
+backend/.env
