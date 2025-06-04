@@ -1,0 +1,10 @@
+{
+    "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
+
+    "name": "spotify-notifications",
+    "common_name": "Spotify Notifications",
+    "description": "Integrates Spotify with Steam to show notifications when new songs start playing",
+    "version": "1.0.0",
+    "author": "Community Plugin",
+    "tags": ["music", "notifications", "spotify", "integration"]
+}

@@ -1,0 +1,27 @@
+{
+  "scripts": {
+    "dev": "millennium-ttc --build dev",
+    "build": "millennium-ttc --build prod"
+  },
+  "devDependencies": {
+    "@babel/preset-env": "^7.27.2",
+    "@babel/preset-react": "^7.27.1",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@types/webpack": "^5.28.5"
+  },
+  "type": "module",
+  "name": "millennium-spotify-plugin",
+  "version": "1.0.0",
+  "description": "A plugin to integrate Spotify with Millennium",
+  "main": "./frontend/index.jsx",
+  "author": "Millennium",
+  "license": "MIT",
+  "dependencies": {
+    "@steambrew/api": "^5.2.21",
+    "@steambrew/client": "^5.2.21",
+    "@steambrew/ttc": "^2.5.3",
+    "@steambrew/webkit": "^5.2.21",
+    "preact": "^10.26.8"
+  }
+}
