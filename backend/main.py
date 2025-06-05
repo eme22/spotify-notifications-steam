@@ -255,6 +255,12 @@ class SpotifyManager:
             self.playback_api = None
             self.using_playback_api = False
 
+            # Optimization variables for monitoring
+            self.last_notification_time = 0
+            self.min_notification_interval = 2.0  # Minimum 2 seconds between notifications
+            self.last_track_change_time = 0
+            self.polling_interval = 1.0  # Check every 1 second for better responsiveness
+
             logger.log("Initializing SpotifyManager")
             
             # Try to initialize Playback API first
@@ -469,7 +475,7 @@ class SpotifyManager:
                         'progress_ms': current.get('progress_ms', 0),
                         'track_id': track.get('id', '')
                     }
-                    logger.log(f"Retrieved track via spotipy: {track_info['name']} by {track_info['artist']}")
+                    #logger.debug(f"Retrieved track via spotipy: {track_info['name']} by {track_info['artist']}")
                     return track_info
             return None
             
@@ -515,7 +521,7 @@ class SpotifyManager:
         """Stop monitoring Spotify"""
         try:
             logger.log("Stopping Spotify monitoring")
-            self.monitoring = False
+            self.monitoring = False            
             if self.monitor_thread and self.monitor_thread.is_alive():
                 self.monitor_thread.join(timeout=5)
             logger.log("Stopped Spotify monitoring")
@@ -523,28 +529,60 @@ class SpotifyManager:
             logger.error(f"Error stopping monitoring: {e}")
     
     def _monitor_loop(self):
-        """Main monitoring loop"""
+        """Main monitoring loop with optimizations"""
         logger.log("Spotify monitoring loop started")
         consecutive_errors = 0
         max_consecutive_errors = 5
+        last_track_id = None
         
         while self.monitoring:
             try:
+                current_time = time.time()
                 current_track = self.get_current_track()
-                if current_track and (not self.current_track or 
-                                    current_track['track_id'] != self.current_track.get('track_id')):
-                    # New track detected
-                    self.current_track = current_track
-                    logger.log(f"New track detected: {current_track['name']} by {current_track['artist']}")
+                
+                # Check if we have a new track
+                if current_track and current_track.get('track_id') != last_track_id:
+                    track_id = current_track.get('track_id')
+                    track_name = current_track.get('name', 'Unknown')
+                    track_artist = current_track.get('artist', 'Unknown')
                     
-                    # Notify frontend
-                    self._notify_frontend(current_track)
+                    logger.log(f"Track change detected: {track_name} by {track_artist}")
+                    
+                    # Check if enough time has passed since last notification
+                    time_since_last_notification = current_time - self.last_notification_time
+                    time_since_last_track_change = current_time - self.last_track_change_time
+                    
+                    # Only send notification if:
+                    # 1. At least min_notification_interval seconds have passed since last notification
+                    # 2. This isn't a rapid consecutive change (track played for at least 2 seconds)
+                    should_notify = (
+                        time_since_last_notification >= self.min_notification_interval and
+                        (last_track_id is None or time_since_last_track_change >= 2.0)
+                    )
+                    
+                    if should_notify:
+                        # Update tracking variables
+                        self.current_track = current_track
+                        self.last_notification_time = current_time
+                        logger.log(f"Sending notification for: {track_name} by {track_artist}")
+                        
+                        # Notify frontend
+                        self._notify_frontend(current_track)
+                    else:
+                        # Track changed but we're not notifying due to timing
+                        reason = "too soon after last notification" if time_since_last_notification < self.min_notification_interval else "rapid consecutive change"
+                        logger.log(f"Skipping notification for '{track_name}' ({reason})")
+                        self.current_track = current_track  # Still update current track
+                    
+                    # Always update these when track changes
+                    last_track_id = track_id
+                    self.last_track_change_time = current_time
                 
                 # Reset error counter on success
                 consecutive_errors = 0
                 
-                # Check every 5 seconds
-                time.sleep(2)
+                # Use optimized polling interval
+                time.sleep(self.polling_interval)
                 
             except Exception as e:
                 consecutive_errors += 1
@@ -555,8 +593,8 @@ class SpotifyManager:
                     self.monitoring = False
                     break
                 
-                # Wait longer on error
-                time.sleep(10)
+                # Wait longer on error, but not too long to maintain responsiveness
+                time.sleep(min(5.0, consecutive_errors * 1.0))
         
         logger.log("Spotify monitoring loop ended")
     def _notify_frontend(self, track_info):
@@ -577,6 +615,23 @@ class SpotifyManager:
             
         except Exception as e:
             logger.error(f"Failed to notify frontend: {e}")
+
+    def configure_monitoring(self, min_notification_interval=2.0, polling_interval=1.0):
+        """Configure monitoring parameters for optimization
+        
+        Args:
+            min_notification_interval (float): Minimum seconds between notifications
+            polling_interval (float): How often to check for track changes
+        """
+        self.min_notification_interval = max(1.0, min_notification_interval)  # At least 1 second
+        self.polling_interval = max(0.5, polling_interval)  # At least 0.5 seconds
+        logger.log(f"Monitoring configured: notification_interval={self.min_notification_interval}s, polling_interval={self.polling_interval}s")
+    
+    def reset_notification_timing(self):
+        """Reset notification timing - useful for manual testing or after errors"""
+        self.last_notification_time = 0
+        self.last_track_change_time = 0
+        logger.log("Notification timing reset")
 
 # Global Spotify manager instance - initialize with error handling
 spotify_manager = None
@@ -653,6 +708,32 @@ class Backend:
             return {"success": True}
         except Exception as e:
             logger.error(f"Error in stop_monitoring: {e}")
+            return {"error": str(e)}
+        
+    @staticmethod
+    def configure_monitoring(min_notification_interval=2.0, polling_interval=1.0):
+        """Configure monitoring parameters (called from frontend)"""
+        try:
+            if not spotify_manager:
+                return {"error": "SpotifyManager not initialized"}
+            
+            spotify_manager.configure_monitoring(min_notification_interval, polling_interval)
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"Error in configure_monitoring: {e}")
+            return {"error": str(e)}
+    
+    @staticmethod
+    def reset_notification_timing():
+        """Reset notification timing (called from frontend)"""
+        try:
+            if not spotify_manager:
+                return {"error": "SpotifyManager not initialized"}
+            
+            spotify_manager.reset_notification_timing()
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"Error in reset_notification_timing: {e}")
             return {"error": str(e)}
         
 class Plugin:
