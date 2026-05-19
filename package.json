@@ -8,7 +8,9 @@
     "@babel/preset-react": "^7.27.1",
     "@types/react": "19.1.6",
     "@types/react-dom": "^19.1.5",
-    "@types/webpack": "^5.28.5"
+    "@types/webpack": "^5.28.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "type": "module",
   "name": "millennium-spotify-plugin",
@@ -20,8 +22,9 @@
   "dependencies": {
     "@steambrew/api": "^5.2.21",
     "@steambrew/client": "^5.2.21",
-    "@steambrew/ttc": "^2.5.3",
+    "@steambrew/ttc": "^3.3.6",
     "@steambrew/webkit": "^5.2.21",
-    "preact": "^10.26.8"
+    "preact": "^10.26.8",
+    "socket.io-client": "^4.8.3"
   }
 }
