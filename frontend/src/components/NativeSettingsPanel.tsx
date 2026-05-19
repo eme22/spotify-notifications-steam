@@ -8,7 +8,7 @@ import {
 } from "@steambrew/client";
 import React, { useState } from "react";
 import { STORAGE_KEYS } from "../constants/keys";
-import { startMonitoring, stopMonitoring, exchangeAuthCode, channel } from "../services/monitoring";
+import { startMonitoring, stopMonitoring, exchangeAuthCode, postToChannel } from "../services/monitoring";
 import { SpotifyNotifications } from "../services/notifications";
 
 export const SpotifySettingsIcon: React.FC = () => (
@@ -59,7 +59,7 @@ export const NativeSettingsPanel: React.FC = () => {
         startMonitoring();
 
         // Broadcast settings update to other windows
-        channel.postMessage({ type: "SETTINGS_UPDATED" });
+        postToChannel({ type: "SETTINGS_UPDATED" });
 
         toaster.toast({
             title: "Spotify Settings",

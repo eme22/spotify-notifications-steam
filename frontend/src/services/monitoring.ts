@@ -14,8 +14,24 @@ let activeSocket: Socket | null = null;
 export let isUsingLocalAPI = false;
 let fallbackTimer: any = null;
 
-// BroadcastChannel for cross-window communication
-export const channel = new BroadcastChannel("spotify_notifications_steam");
+// BroadcastChannel wrappers for reliable cross-window and same-context communication
+export function postToChannel(message: any) {
+    const sender = new BroadcastChannel("spotify_notifications_steam");
+    sender.postMessage(message);
+    sender.close();
+}
+
+export function listenToChannel(callback: (e: MessageEvent) => void) {
+    const receiver = new BroadcastChannel("spotify_notifications_steam");
+    const listener = (e: MessageEvent) => {
+        callback(e);
+    };
+    receiver.addEventListener("message", listener);
+    return () => {
+        receiver.removeEventListener("message", listener);
+        receiver.close();
+    };
+}
 
 // Helper to check token expiration
 export const isTokenExpired = () => {
@@ -103,7 +119,7 @@ export async function startMonitoring() {
     const processCurrentlyPlaying = (data: any) => {
         if (!data || !data.item) {
             updateTrackState(null);
-            channel.postMessage({ type: "TRACK_UPDATE", track: null });
+            postToChannel({ type: "TRACK_UPDATE", track: null });
             return;
         }
         
@@ -116,12 +132,14 @@ export async function startMonitoring() {
             id: track.id || track.name || "",
             duration_ms: track.duration_ms || 0,
             progress_ms: data.progress_ms || 0,
-            is_playing: data.is_playing ?? false
+            is_playing: data.is_playing ?? false,
+            shuffle_state: data.shuffle_state ?? false,
+            repeat_state: data.repeat_state ?? "off"
         };
 
         // Update global track state and broadcast
         updateTrackState(trackInfo);
-        channel.postMessage({ type: "TRACK_UPDATE", track: trackInfo });
+        postToChannel({ type: "TRACK_UPDATE", track: trackInfo });
 
         if (data.is_playing) {
             const now = Date.now();
@@ -148,7 +166,7 @@ export async function startMonitoring() {
                 token = await refreshAccessToken(clientId, clientSecret, refreshToken);
             }
 
-            const response = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+            const response = await fetch("https://api.spotify.com/v1/me/player", {
                 headers: {
                     "Authorization": `Bearer ${token}`
                 }
@@ -157,7 +175,7 @@ export async function startMonitoring() {
             if (response.status === 401 && refreshToken) {
                 // Force refresh token on unauthorized and retry once
                 token = await refreshAccessToken(clientId, clientSecret, refreshToken);
-                const retryResponse = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+                const retryResponse = await fetch("https://api.spotify.com/v1/me/player", {
                     headers: {
                         "Authorization": `Bearer ${token}`
                     }
@@ -174,7 +192,7 @@ export async function startMonitoring() {
             } else if (response.status === 204) {
                 // No active track playing
                 updateTrackState(null);
-                channel.postMessage({ type: "TRACK_UPDATE", track: null });
+                postToChannel({ type: "TRACK_UPDATE", track: null });
             }
         } catch (err) {
             console.error("Error polling Spotify Web API:", err);
@@ -278,13 +296,38 @@ export async function startMonitoring() {
         if (!data || !data.track || data.track === "No track info yet") {
             console.debug("Empty or uninitialized player_data received.");
             updateTrackState(null);
-            channel.postMessage({ type: "TRACK_UPDATE", track: null });
+            postToChannel({ type: "TRACK_UPDATE", track: null });
             return;
         }
         const track = data.track;
         
         let trackInfo: any = null;
         if (typeof track === "string") {
+            let isPlaying = true;
+            if (data.is_playing !== undefined && data.is_playing !== null) {
+                isPlaying = data.is_playing;
+            } else if (data.is_paused === true || data.is_stopped === true) {
+                isPlaying = false;
+            }
+
+            let repeatVal = "off";
+            if (data.repeat_mode !== undefined && data.repeat_mode !== null) {
+                if (data.repeat_mode === 1) {
+                    repeatVal = "context";
+                } else if (data.repeat_mode === 2) {
+                    repeatVal = "track";
+                } else {
+                    repeatVal = "off";
+                }
+            } else {
+                const rawRepeat = data.repeat ?? data.repeat_state ?? "off";
+                if (typeof rawRepeat === "boolean") {
+                    repeatVal = rawRepeat ? "context" : "off";
+                } else if (typeof rawRepeat === "string") {
+                    repeatVal = rawRepeat;
+                }
+            }
+
             trackInfo = {
                 name: track,
                 artist: "Unknown Artist",
@@ -292,10 +335,39 @@ export async function startMonitoring() {
                 image_url: "",
                 id: track,
                 duration_ms: data.duration_ms || data.duration || 0,
-                progress_ms: data.progress_ms || data.progress || 0,
-                is_playing: data.is_playing ?? true
+                progress_ms: data.progress_ms ?? data.progress ?? 0,
+                is_playing: isPlaying,
+                shuffle_state: data.shuffle_active ?? data.shuffle ?? data.shuffle_state ?? false,
+                repeat_state: repeatVal
             };
         } else if (typeof track === "object") {
+            let isPlaying = true;
+            if (data.is_playing !== undefined && data.is_playing !== null) {
+                isPlaying = data.is_playing;
+            } else if (data.is_paused === true || data.is_stopped === true) {
+                isPlaying = false;
+            } else if (track.is_playing !== undefined && track.is_playing !== null) {
+                isPlaying = track.is_playing;
+            }
+
+            let repeatVal = "off";
+            if (data.repeat_mode !== undefined && data.repeat_mode !== null) {
+                if (data.repeat_mode === 1) {
+                    repeatVal = "context";
+                } else if (data.repeat_mode === 2) {
+                    repeatVal = "track";
+                } else {
+                    repeatVal = "off";
+                }
+            } else {
+                const rawRepeat = track.repeat ?? data.repeat ?? track.repeat_state ?? data.repeat_state ?? "off";
+                if (typeof rawRepeat === "boolean") {
+                    repeatVal = rawRepeat ? "context" : "off";
+                } else if (typeof rawRepeat === "string") {
+                    repeatVal = rawRepeat;
+                }
+            }
+
             trackInfo = {
                 name: track.name || "Unknown",
                 artist: track.artist || "Unknown",
@@ -303,8 +375,10 @@ export async function startMonitoring() {
                 image_url: track.image_url || "",
                 id: track.id || track.name || "",
                 duration_ms: track.duration_ms || data.duration_ms || data.duration || 0,
-                progress_ms: track.progress_ms || data.progress_ms || data.progress || 0,
-                is_playing: track.is_playing ?? data.is_playing ?? true
+                progress_ms: track.progress_ms ?? data.progress_ms ?? track.progress ?? data.progress ?? 0,
+                is_playing: isPlaying,
+                shuffle_state: data.shuffle_active ?? track.shuffle ?? data.shuffle ?? track.shuffle_state ?? data.shuffle_state ?? false,
+                repeat_state: repeatVal
             };
         }
 
@@ -313,7 +387,7 @@ export async function startMonitoring() {
             
             // Update global track state and broadcast
             updateTrackState(trackInfo);
-            channel.postMessage({ type: "TRACK_UPDATE", track: trackInfo });
+            postToChannel({ type: "TRACK_UPDATE", track: trackInfo });
 
             const now = Date.now();
             console.debug(`Checking notification condition: trackInfo.id="${trackInfo.id}" vs lastTrackId="${lastTrackId}", is_playing=${trackInfo.is_playing}`);
@@ -374,7 +448,7 @@ export function stopMonitoring() {
 }
 
 // Send playback commands to Spotify (local API or official Spotify Web API)
-export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "previous" | "volume" | "seek" | "shuffle" | "repeat", value?: number) {
+export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "previous" | "volume" | "seek" | "shuffle" | "repeat", value?: any) {
     console.log(`[Spotify Notifications API] sendPlaybackCommand invoked: command=${command}, value=${value}, isUsingLocalAPI=${isUsingLocalAPI}`);
     if (isUsingLocalAPI) {
         const host = localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1";
@@ -382,6 +456,13 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
         
         console.log(`[Spotify Notifications API] Local API Mode - host=${host}, port=${port}`);
         
+        let localValue = value;
+        if (command === "repeat" && typeof value === "string") {
+            if (value === "off") localValue = 0;
+            else if (value === "context") localValue = 1;
+            else if (value === "track") localValue = 2;
+        }
+
         // 1. Emit to Socket.IO connection
         if (activeSocket) {
             console.log(`[Spotify Notifications API] Socket state: connected=${activeSocket.connected}`);
@@ -397,11 +478,11 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
                 } else if (command === "previous") {
                     activeSocket.emit("Prev");
                 } else if (command === "shuffle") {
-                    activeSocket.emit("Shuffle");
+                    activeSocket.emit("Shuffle", value);
                 } else if (command === "repeat") {
-                    activeSocket.emit("Repeat");
+                    activeSocket.emit("Repeat", localValue);
                 } else {
-                    activeSocket.emit(command);
+                    activeSocket.emit(command, value);
                 }
                 console.log(`[Spotify Notifications API] Socket.IO event emitted for command: ${command}`);
             }
@@ -414,6 +495,10 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
                 localUrl = `http://${host}:${port}/volume?value=${value}`;
             } else if (command === "seek" && value !== undefined) {
                 localUrl = `http://${host}:${port}/seek?value=${value}`;
+            } else if (command === "shuffle" && value !== undefined) {
+                localUrl = `http://${host}:${port}/shuffle?state=${value}`;
+            } else if (command === "repeat" && value !== undefined) {
+                localUrl = `http://${host}:${port}/repeat?state=${localValue}`;
             } else {
                 const endpointMap: Record<string, string> = {
                     play: "PlayPause",
@@ -472,6 +557,10 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
             url += `?volume_percent=${value}`;
         } else if (command === "seek" && value !== undefined) {
             url += `?position_ms=${value}`;
+        } else if (command === "shuffle" && value !== undefined) {
+            url += `?state=${value}`;
+        } else if (command === "repeat" && value !== undefined) {
+            url += `?state=${value}`;
         }
         const method = command === "play" || command === "pause" || command === "volume" || command === "seek" || command === "shuffle" || command === "repeat" ? "PUT" : "POST";
         

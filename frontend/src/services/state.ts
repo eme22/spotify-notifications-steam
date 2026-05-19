@@ -11,11 +11,18 @@ export const isSyncEnabled = () => localStorage.getItem(STORAGE_KEYS.SYNC_NATIVE
 export const isVolumeSyncEnabled = () => localStorage.getItem(STORAGE_KEYS.SYNC_VOLUME) !== "false";
 
 export function getMockMusicTrack() {
+    let repeatStatus = 0;
+    if (currentTrackState?.repeat_state === "context") {
+        repeatStatus = 1;
+    } else if (currentTrackState?.repeat_state === "track") {
+        repeatStatus = 2;
+    }
+
     return {
         uSoundtrackAppId: 0,
         ePlaybackStatus: currentTrackState?.is_playing ? 1 : 2, // 1 = Playing, 2 = Paused
-        eRepeatStatus: 0,
-        bShuffle: false,
+        eRepeatStatus: repeatStatus,
+        bShuffle: currentTrackState?.shuffle_state ?? false,
         nVolume: currentTrackState?.volume_percent ?? 100,
         nActiveTrack: 0,
         nLengthInMsec: currentTrackState?.duration_ms || 0

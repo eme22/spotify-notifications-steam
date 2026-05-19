@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
-import { channel } from "../services/monitoring";
+import { postToChannel, listenToChannel } from "../services/monitoring";
 import { currentTrackState, onTrackChange } from "../services/state";
 import { formatTime } from "../utils/helpers";
 import { console } from "../utils/logger";
@@ -25,23 +25,22 @@ export const SpotifyMiniPlayer: React.FC = () => {
             }
         });
 
-        const handleBroadcast = (e: MessageEvent) => {
+        const unsubscribeChannel = listenToChannel((e: MessageEvent) => {
             if (e.data.type === "TRACK_UPDATE") {
                 setTrack(e.data.track);
                 if (e.data.track) {
                     setLocalProgress(e.data.track.progress_ms || 0);
                 }
             }
-        };
-        channel.addEventListener("message", handleBroadcast);
+        });
 
         // Request initial state from main client background process
         console.log(`[Spotify Notifications MiniPlayer] Requesting initial state from backend...`);
-        channel.postMessage({ type: "REQUEST_INITIAL_STATE" });
+        postToChannel({ type: "REQUEST_INITIAL_STATE" });
 
         return () => {
             unsubscribe();
-            channel.removeEventListener("message", handleBroadcast);
+            unsubscribeChannel();
         };
     }, []);
 
@@ -71,18 +70,30 @@ export const SpotifyMiniPlayer: React.FC = () => {
     // Handle playback commands
     const handleCommand = (command: "play" | "pause" | "next" | "previous" | "shuffle" | "repeat") => {
         console.log(`[Spotify Notifications MiniPlayer] Button clicked: ${command}`);
-        // Request the main background window (SharedJSContext) to execute the command
-        channel.postMessage({ type: "PLAYBACK_COMMAND", command });
         
-        // Optimistic update of local UI for instant response feel
-        if (command === "play" || command === "pause") {
-            setTrack((prev: any) => prev ? { ...prev, is_playing: command === "play" } : prev);
+        let value: any = undefined;
+        if (command === "shuffle") {
+            value = !track.shuffle_state;
+        } else if (command === "repeat") {
+            if (track.repeat_state === "off") {
+                value = "context";
+            } else if (track.repeat_state === "context") {
+                value = "track";
+            } else {
+                value = "off";
+            }
         }
+
+        // Request the main background window (SharedJSContext) to execute the command
+        postToChannel({ type: "PLAYBACK_COMMAND", command, value });
     };
 
     if (!track) return null;
 
     const progressPercent = track.duration_ms > 0 ? (localProgress / track.duration_ms) * 100 : 0;
+    const isShuffleActive = track.shuffle_state === true;
+    const isRepeatActive = track.repeat_state === "context" || track.repeat_state === "track";
+    const repeatTitle = track.repeat_state === "track" ? "Repeat: One" : track.repeat_state === "context" ? "Repeat: All" : "Repeat: Off";
 
     return (
         <div style={{
@@ -220,12 +231,13 @@ export const SpotifyMiniPlayer: React.FC = () => {
                     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "10px", marginTop: "4px" }}>
                         <button 
                             type="button" 
-                            className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn" 
+                            className={`_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`} 
                             onClick={() => handleCommand("shuffle")} 
-                            title="Shuffle"
+                            title={`Shuffle: ${isShuffleActive ? 'On' : 'Off'}`}
+                            style={isShuffleActive ? { color: "var(--brand-primary, var(--brand-color, #1DB954))" } : undefined}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path d="M6 25h4.5l6.5-14H24v-3h-7.5l-6.5 14H6v3Zm18-17v6l8-7.5-8-7.5v9Zm0 19.5v-3H17l-1.9 4H24v3l8-7.5-8-7.5v11ZM6 11h4.5l1.9-4H6v4Z" fill="currentColor"></path>
+                                <path fill-rule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
                             </svg>
                         </button>
                         <button 
@@ -268,18 +280,26 @@ export const SpotifyMiniPlayer: React.FC = () => {
                             title="Next Track"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
+                                <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
                             </svg>
                         </button>
                         <button 
                             type="button" 
-                            className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn" 
+                            className={`_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`} 
                             onClick={() => handleCommand("repeat")} 
-                            title="Repeat"
+                            title={repeatTitle}
+                            style={isRepeatActive ? { color: "var(--brand-primary, var(--brand-color, #1DB954))" } : undefined}
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path d="M6 18c0-5.5 4.5-10 10-10h8v-3l8 7.5-8 7.5v-3h-8c-3.3 0-6 2.7-6 6s2.7 6 6 6h12v3H16c-5.5 0-10-4.5-10-10Zm24 0c0 5.5-4.5 10-10 10h-8v3l-8-7.5 8-7.5v3h8c3.3 0 6-2.7 6-6s-2.7-6-6-6H6v-3h14c5.5 0 10 4.5 10 10Z" fill="currentColor"></path>
-                            </svg>
+                            {track.repeat_state === "track" ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none" style={{ position: 'relative' }}>
+                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
+                                    <text x="18" y="22" fontFamily="'Motiva Sans', sans-serif" fontSize="9" fontWeight="bold" fill="currentColor" textAnchor="middle">1</text>
+                                </svg>
+                            ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
+                                </svg>
+                            )}
                         </button>
                     </div>
                 </div>

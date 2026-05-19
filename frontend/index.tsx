@@ -1,5 +1,5 @@
 import { hookNativeControls, hookNativeObservers } from "./src/hooks/nativeHooks";
-import { startMonitoring, stopMonitoring, sendPlaybackCommand, channel } from "./src/services/monitoring";
+import { startMonitoring, stopMonitoring, sendPlaybackCommand, listenToChannel, postToChannel } from "./src/services/monitoring";
 import { currentTrackState } from "./src/services/state";
 import { startOverlayPolling } from "./src/components/SpotifyMiniPlayer";
 import { SpotifySettingsIcon, NativeSettingsPanel } from "./src/components/NativeSettingsPanel";
@@ -24,7 +24,7 @@ export default async function PluginMain() {
         // SharedJSContext: Runs ONLY the background socket connection & monitoring loop
         
         // Listen for playback commands and initial state requests from overlay
-        channel.addEventListener("message", (e) => {
+        listenToChannel((e) => {
             console.log(`[Spotify Notifications Backend] Received BroadcastChannel message:`, e.data);
             if (e.data.type === "PLAYBACK_COMMAND") {
                 console.log(`[Spotify Notifications Backend] Processing PLAYBACK_COMMAND: ${e.data.command} with value:`, e.data.value);
@@ -32,7 +32,7 @@ export default async function PluginMain() {
             } else if (e.data.type === "REQUEST_INITIAL_STATE") {
                 console.log(`[Spotify Notifications Backend] Sending initial track state to new window`);
                 if (currentTrackState) {
-                    channel.postMessage({ type: "TRACK_UPDATE", track: currentTrackState });
+                    postToChannel({ type: "TRACK_UPDATE", track: currentTrackState });
                 }
             } else if (e.data.type === "SETTINGS_UPDATED") {
                 console.log("Settings updated in another window. Restarting monitoring in Main...");

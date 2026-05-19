@@ -1,5 +1,5 @@
 import { console } from "../utils/logger";
-import { channel } from "../services/monitoring";
+import { postToChannel } from "../services/monitoring";
 import { 
     isSyncEnabled, 
     isVolumeSyncEnabled, 
@@ -21,7 +21,7 @@ export function hookNativeControls() {
     const originalTogglePlayPause = Music.TogglePlayPause;
     Music.TogglePlayPause = function() {
         if (isSyncEnabled() && currentTrackState) {
-            channel.postMessage({ type: "PLAYBACK_COMMAND", command: currentTrackState.is_playing ? "pause" : "play" });
+            postToChannel({ type: "PLAYBACK_COMMAND", command: currentTrackState.is_playing ? "pause" : "play" });
             
             // Optimistic update
             currentTrackState.is_playing = !currentTrackState.is_playing;
@@ -35,7 +35,7 @@ export function hookNativeControls() {
     const originalPlayNext = Music.PlayNext;
     Music.PlayNext = function() {
         if (isSyncEnabled()) {
-            channel.postMessage({ type: "PLAYBACK_COMMAND", command: "next" });
+            postToChannel({ type: "PLAYBACK_COMMAND", command: "next" });
         } else {
             originalPlayNext.apply(this, arguments);
         }
@@ -45,7 +45,7 @@ export function hookNativeControls() {
     const originalPlayPrevious = Music.PlayPrevious;
     Music.PlayPrevious = function() {
         if (isSyncEnabled()) {
-            channel.postMessage({ type: "PLAYBACK_COMMAND", command: "previous" });
+            postToChannel({ type: "PLAYBACK_COMMAND", command: "previous" });
         } else {
             originalPlayPrevious.apply(this, arguments);
         }
@@ -55,7 +55,7 @@ export function hookNativeControls() {
     const originalSetVolume = Music.SetVolume;
     Music.SetVolume = function(volume: number) {
         if (isSyncEnabled() && isVolumeSyncEnabled()) {
-            channel.postMessage({ type: "PLAYBACK_COMMAND", command: "volume", value: volume });
+            postToChannel({ type: "PLAYBACK_COMMAND", command: "volume", value: volume });
             if (currentTrackState) {
                 currentTrackState.volume_percent = volume;
             }
@@ -70,7 +70,7 @@ export function hookNativeControls() {
     Music.SetPlaybackPosition = function(seconds: number) {
         if (isSyncEnabled()) {
             const ms = seconds * 1000;
-            channel.postMessage({ type: "PLAYBACK_COMMAND", command: "seek", value: ms });
+            postToChannel({ type: "PLAYBACK_COMMAND", command: "seek", value: ms });
             if (currentTrackState) {
                 currentTrackState.progress_ms = ms;
             }
