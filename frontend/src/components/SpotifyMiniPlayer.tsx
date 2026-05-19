@@ -9,7 +9,12 @@ export const SpotifyMiniPlayer: React.FC = () => {
     const [track, setTrack] = useState<any>(currentTrackState);
     const [isCollapsed, setIsCollapsed] = useState(true);
     const [localProgress, setLocalProgress] = useState(0);
-    const progressIntervalRef = useRef<any>(null);
+    const localProgressRef = useRef<number>(0);
+
+    const updateLocalProgress = (progress: number) => {
+        localProgressRef.current = progress;
+        setLocalProgress(progress);
+    };
 
     // Handle collapse state locally (injected strictly into a single view now)
     const toggleCollapsed = (collapsed: boolean) => {
@@ -20,17 +25,11 @@ export const SpotifyMiniPlayer: React.FC = () => {
     useEffect(() => {
         const unsubscribe = onTrackChange((newTrack) => {
             setTrack(newTrack);
-            if (newTrack) {
-                setLocalProgress(newTrack.progress_ms || 0);
-            }
         });
 
         const unsubscribeChannel = listenToChannel((e: MessageEvent) => {
             if (e.data.type === "TRACK_UPDATE") {
                 setTrack(e.data.track);
-                if (e.data.track) {
-                    setLocalProgress(e.data.track.progress_ms || 0);
-                }
             }
         });
 
@@ -44,28 +43,93 @@ export const SpotifyMiniPlayer: React.FC = () => {
         };
     }, []);
 
-    // Smooth real-time progress bar increment
+    const baselineTrackIdRef = useRef<string | null>(null);
+    const baselineProgressRef = useRef<number>(0);
+    const baselineTimeRef = useRef<number>(0);
+    const baselineIsPlayingRef = useRef<boolean>(false);
+
+    // Track baseline and process API updates (Reference updates)
     useEffect(() => {
-        if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-            progressIntervalRef.current = null;
+        if (!track) {
+            baselineTrackIdRef.current = null;
+            baselineProgressRef.current = 0;
+            baselineTimeRef.current = 0;
+            baselineIsPlayingRef.current = false;
+            updateLocalProgress(0);
+            return;
         }
 
-        if (track && track.is_playing) {
-            progressIntervalRef.current = setInterval(() => {
-                setLocalProgress(prev => {
-                    const next = prev + 1000;
-                    return next > track.duration_ms ? track.duration_ms : next;
-                });
-            }, 1000);
+        const currentTrackId = track.id;
+        const currentProgress = track.progress_ms || 0;
+        const currentTime = Date.now();
+        const currentIsPlaying = track.is_playing || false;
+
+        // Detect if this is the first lookup of this song, OR if the playing state changed
+        const isFirstLookup = baselineTrackIdRef.current !== currentTrackId;
+        const isPlayStateChanged = baselineIsPlayingRef.current !== currentIsPlaying;
+
+        if (isFirstLookup) {
+            baselineTrackIdRef.current = currentTrackId;
+            baselineProgressRef.current = currentProgress;
+            baselineTimeRef.current = currentTime;
+            baselineIsPlayingRef.current = currentIsPlaying;
+            updateLocalProgress(currentProgress);
+            return;
         }
 
-        return () => {
-            if (progressIntervalRef.current) {
-                clearInterval(progressIntervalRef.current);
+        if (isPlayStateChanged) {
+            baselineTrackIdRef.current = currentTrackId;
+            baselineIsPlayingRef.current = currentIsPlaying;
+            baselineTimeRef.current = currentTime;
+            
+            if (!currentIsPlaying) {
+                // Paused: Freeze baseline progress at the exact current smooth localProgress position
+                baselineProgressRef.current = localProgressRef.current;
+                updateLocalProgress(localProgressRef.current);
+            } else {
+                // Resumed: Resume tracking from where we paused (baselineProgressRef.current),
+                // but reset baselineTimeRef to currentTime so elapsed starts counting from now!
+                updateLocalProgress(baselineProgressRef.current);
             }
-        };
+            return;
+        }
+
+        // Subsequent updates: calculate estimated progress based on baseline
+        let estimatedProgress = baselineProgressRef.current;
+        if (currentIsPlaying) {
+            estimatedProgress += (currentTime - baselineTimeRef.current);
+        }
+
+        // Check the discrepancy between estimated progress and the API's progress
+        const diff = Math.abs(currentProgress - estimatedProgress);
+
+        // If the difference is more than 3 seconds, update the baseline to the real API progress
+        if (diff > 3000) {
+            console.log(`[Spotify MiniPlayer] Discrepancy detected (${diff}ms > 3s). Resyncing baseline to API real progress: ${currentProgress}ms`);
+            baselineProgressRef.current = currentProgress;
+            baselineTimeRef.current = currentTime;
+            updateLocalProgress(currentProgress);
+        }
     }, [track]);
+
+    // High-frequency real-time estimated progress renderer
+    useEffect(() => {
+        if (!track || !track.is_playing) {
+            return () => {};
+        }
+
+        const interval = setInterval(() => {
+            const currentTime = Date.now();
+            if (baselineTrackIdRef.current === track.id && baselineTimeRef.current > 0) {
+                const elapsed = currentTime - baselineTimeRef.current;
+                const estimated = baselineProgressRef.current + elapsed;
+                const finalProgress = estimated > track.duration_ms ? track.duration_ms : estimated;
+                updateLocalProgress(finalProgress);
+            }
+        }, 100);
+
+        return () => clearInterval(interval);
+    }, [track?.id, track?.is_playing]);
 
     // Handle playback commands
     const handleCommand = (command: "play" | "pause" | "next" | "previous" | "shuffle" | "repeat") => {
@@ -84,6 +148,13 @@ export const SpotifyMiniPlayer: React.FC = () => {
             }
         }
 
+        // Optimistically update playing state immediately for instant responsive playback visual feedback
+        if (command === "play") {
+            setTrack((prev: any) => prev ? { ...prev, is_playing: true } : prev);
+        } else if (command === "pause") {
+            setTrack((prev: any) => prev ? { ...prev, is_playing: false } : prev);
+        }
+
         // Request the main background window (SharedJSContext) to execute the command
         postToChannel({ type: "PLAYBACK_COMMAND", command, value });
     };
@@ -95,154 +166,397 @@ export const SpotifyMiniPlayer: React.FC = () => {
     const isRepeatActive = track.repeat_state === "context" || track.repeat_state === "track";
     const repeatTitle = track.repeat_state === "track" ? "Repeat: One" : track.repeat_state === "context" ? "Repeat: All" : "Repeat: Off";
 
+    const playerRef = useRef<HTMLDivElement>(null);
+    const [position, setPosition] = useState<{ x: number; y: number } | null>(() => {
+        const savedX = localStorage.getItem("spotify_notif_player_x");
+        const savedY = localStorage.getItem("spotify_notif_player_y");
+        if (savedX !== null && savedY !== null) {
+            return { x: parseInt(savedX, 10), y: parseInt(savedY, 10) };
+        }
+        return null;
+    });
+    const [isDragging, setIsDragging] = useState(false);
+    const dragStartRef = useRef<{ startX: number; startY: number; posX: number; posY: number } | null>(null);
+
+    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (isCollapsed) return;
+        if (e.button !== 0) return;
+
+        const target = e.target as HTMLElement;
+        if (
+            target.closest("button") || 
+            target.closest(".window-controls") || 
+            target.closest(".player-progress-container") ||
+            target.closest(".player-artist") ||
+            target.closest(".player-title")
+        ) {
+            return;
+        }
+
+        const rect = e.currentTarget.getBoundingClientRect();
+        dragStartRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            posX: rect.left,
+            posY: rect.top
+        };
+        setIsDragging(true);
+        e.preventDefault();
+    };
+
+    useEffect(() => {
+        if (!isDragging) return () => {};
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!dragStartRef.current) return;
+
+            const deltaX = e.clientX - dragStartRef.current.startX;
+            const deltaY = e.clientY - dragStartRef.current.startY;
+
+            let newX = dragStartRef.current.posX + deltaX;
+            let newY = dragStartRef.current.posY + deltaY;
+
+            // Bounding to viewport
+            const playerEl = playerRef.current;
+            const playerWidth = playerEl?.offsetWidth || 320;
+            const playerHeight = playerEl?.offsetHeight || 140;
+
+            const ownerDoc = playerEl?.ownerDocument || document;
+            const ownerWindow = ownerDoc.defaultView || window;
+
+            const viewportWidth = ownerWindow.innerWidth;
+            const viewportHeight = ownerWindow.innerHeight;
+
+            if (newX < 10) newX = 10;
+            if (newX + playerWidth > viewportWidth - 10) newX = viewportWidth - playerWidth - 10;
+            if (newY < 10) newY = 10;
+            if (newY + playerHeight > viewportHeight - 10) newY = viewportHeight - playerHeight - 10;
+
+            setPosition({ x: newX, y: newY });
+        };
+
+        const handleMouseUp = () => {
+            if (dragStartRef.current) {
+                if (position) {
+                    localStorage.setItem("spotify_notif_player_x", position.x.toString());
+                    localStorage.setItem("spotify_notif_player_y", position.y.toString());
+                }
+                dragStartRef.current = null;
+                setIsDragging(false);
+            }
+        };
+
+        const playerEl = playerRef.current;
+        const ownerDoc = playerEl?.ownerDocument || document;
+        const ownerWindow = ownerDoc.defaultView || window;
+
+        ownerWindow.addEventListener("mousemove", handleMouseMove);
+        ownerWindow.addEventListener("mouseup", handleMouseUp);
+
+        return () => {
+            ownerWindow.removeEventListener("mousemove", handleMouseMove);
+            ownerWindow.removeEventListener("mouseup", handleMouseUp);
+        };
+    }, [isDragging, position]);
+
     return (
-        <div style={{
-            position: "fixed",
-            bottom: "35px",
-            right: "25px",
-            zIndex: 999999,
-            fontFamily: "'Motiva Sans', Arial, Helvetica, sans-serif",
-            userSelect: "none"
-        }}>
+        <div 
+            ref={playerRef}
+            onMouseDown={handleMouseDown}
+            style={{
+                position: "fixed",
+                zIndex: 999999,
+                fontFamily: "'Motiva Sans', Arial, Helvetica, sans-serif",
+                userSelect: "none",
+                cursor: !isCollapsed ? (isDragging ? "grabbing" : "grab") : "default",
+                transition: isDragging ? "none" : "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+                ...(isCollapsed
+                    ? { bottom: "35px", right: "25px", left: "auto", top: "auto" }
+                    : (position 
+                        ? { left: `${position.x}px`, top: `${position.y}px`, bottom: "auto", right: "auto" } 
+                        : { bottom: "35px", right: "25px", left: "auto", top: "auto" }
+                      )
+                )
+            }}
+        >
             <style>{`
+                :root {
+                    /* Playback Green accents (Steam's primary brand accent!) */
+                    --player-accent: #90ba3c;
+                }
+
                 .glass-player {
-                    background: var(--dialog-input-bg, var(--DialogBG, rgba(20, 24, 33, 0.85)));
-                    backdrop-filter: blur(24px) saturate(180%);
-                    -webkit-backdrop-filter: blur(24px) saturate(180%);
-                    border: 1px solid var(--dialog-border-color, var(--DialogBorder, rgba(255, 255, 255, 0.1)));
-                    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-                    border-radius: var(--dialog-button-border-radius, var(--DialogRadius, 12px));
-                    padding: 14px;
+                    padding: 8px;
                     width: 320px;
                     display: flex;
                     flex-direction: column;
-                    gap: 12px;
-                    color: var(--text-color, #e1e2e6);
+                    gap: 8px;
                     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
                     animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                    box-sizing: border-box;
+                    position: relative;
+
+                    /* Pure native cross-theme variable chain for background, borders, and radius! */
+                    background: var(--dialog-bg, var(--gpBackground-DarkSoft, var(--DarkGreenBG, var(--GreenBG, rgba(30, 37, 51, 0.98))))) !important;
+                    border: var(--gpBorder-Medium, var(--Outset, 1px solid rgba(255, 255, 255, 0.1))) !important;
+                    border-radius: var(--gpCorner-Large, 0px) !important;
+                    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
                 }
-                .spotify-pill {
-                    width: 46px;
-                    height: 46px;
-                    background: var(--brand-primary, var(--brand-color, #1DB954));
-                    border-radius: 50%;
-                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+
+                .player-header {
+                    position: relative;
+                    overflow: hidden;
                     display: flex;
+                    gap: 10px;
                     align-items: center;
+                    padding: 2px 4px;
+                }
+
+                .player-avatar-and-user {
+                    display: flex;
+                    gap: 10px;
+                    align-items: center;
+                    width: 100%;
+                    z-index: 1;
+                }
+
+                .player-avatar-holder {
+                    width: 42px;
+                    height: 42px;
+                    min-width: 42px;
+                }
+
+                .player-avatar-img {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                }
+
+                .player-label-holder {
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    flex-direction: column;
+                    padding-left: 4px;
+                }
+
+                .player-title-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .player-title {
+                    font-weight: bold;
+                    font-size: 13px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .player-artist {
+                    color: var(--player-accent);
+                    font-size: 11px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                /* Absolute positioned wrapper for themed native close controls */
+                .glass-player .window-controls {
+                    position: absolute !important;
+                    top: 4px !important;
+                    right: 4px !important;
+                    z-index: 10 !important;
+                    display: flex !important;
+                    gap: 4px !important;
+                    padding: 0 !important;
+                    background: transparent !important;
+                    border: none !important;
+                }
+                .glass-player .window-controls .title-area-icon {
+                    cursor: pointer !important;
+                }
+
+                .player-progress-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    padding: 0 4px;
+                }
+
+                .player-progress-track {
+                    height: 4px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 2px;
+                    position: relative;
+                    overflow: hidden;
+                }
+
+                .player-progress-bar {
+                    height: 100%;
+                    background: var(--player-accent);
+                    border-radius: 2px;
+                    transition: width 0.1s linear;
+                }
+
+                .player-durations {
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 10px;
+                    color: var(--text-muted, #a3a3ac);
+                }
+
+                .player-controls {
+                    display: flex;
                     justify-content: center;
-                    cursor: pointer;
-                    color: var(--text-primary, #ffffff);
-                    font-size: 22px;
-                    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-                    animation: pulseGlow 2s infinite alternate;
+                    align-items: center;
+                    gap: 10px;
+                    margin-top: 2px;
                 }
-                .spotify-pill:hover {
-                    transform: scale(1.1) rotate(5deg);
-                    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-                }
-                @keyframes slideUp {
-                    from { opacity: 0; transform: translateY(20px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-                @keyframes pulseGlow {
-                    0% { box-shadow: 0 4px 12px rgba(29, 185, 84, 0.2); }
-                    100% { box-shadow: 0 4px 22px rgba(29, 185, 84, 0.5); }
-                }
-                .control-btn {
+
+                /* Highly specific button selectors to override Steam's native padding/margins and force layout dimensions, 
+                   while leaving background, border-radius, and borders untouched to let custom themes style them natively! */
+                div.friendlist.glass-player button.DialogButton.control-btn {
                     width: 32px !important;
                     height: 32px !important;
+                    min-width: 32px !important;
+                    max-width: 32px !important;
                     display: inline-flex !important;
                     align-items: center !important;
                     justify-content: center !important;
                     padding: 0 !important;
-                    min-width: 0 !important;
-                    border-radius: 50% !important;
-                    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+                    flex-grow: 0 !important;
+                    flex-shrink: 0 !important;
+                    flex: none !important;
+                    box-sizing: border-box !important;
+                    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
                     cursor: pointer;
                 }
-                .control-btn:hover {
+                div.friendlist.glass-player button.DialogButton.control-btn:hover {
                     transform: scale(1.08) !important;
                 }
-                .control-btn svg {
-                    width: 14px !important;
-                    height: 14px !important;
-                    display: block;
+                div.friendlist.glass-player button.DialogButton.control-btn.active-btn {
+                    color: var(--player-accent) !important;
                 }
-                .control-btn-play {
+
+                div.friendlist.glass-player button.DialogButton.control-btn-play {
                     width: 38px !important;
                     height: 38px !important;
+                    min-width: 38px !important;
+                    max-width: 38px !important;
+                    padding: 0 !important;
+                    flex-grow: 0 !important;
+                    flex-shrink: 0 !important;
+                    flex: none !important;
+                    box-sizing: border-box !important;
                 }
-                .control-btn-play svg {
+                div.friendlist.glass-player button.DialogButton.control-btn svg {
+                    width: 14px !important;
+                    height: 14px !important;
+                    display: block !important;
+                }
+                div.friendlist.glass-player button.DialogButton.control-btn-play svg {
                     width: 18px !important;
                     height: 18px !important;
+                    color: var(--player-accent) !important; /* Highlights the Play button icon beautifully in standard themes! */
+                }
+
+                .player-collapsed-avatar {
+                    width: 48px;
+                    height: 48px;
+                    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+                    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                @keyframes slideUp {
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
                 }
             `}</style>
 
             {isCollapsed ? (
-                <div onClick={() => toggleCollapsed(false)} className="spotify-pill" title="Open Spotify Controller">
-                    {track.image_url ? (
-                        <img src={track.image_url} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                    ) : (
-                        "♫"
-                    )}
+                <div onClick={() => toggleCollapsed(false)} className="friendlist FriendsListContent DialogBody ModalPosition" style={{ cursor: "pointer" }} title="Open Spotify Controller">
+                    <div className="nibodjvvrm86uCfnnAn4g avatarHolder no-drag Medium ingame player-collapsed-avatar">
+                        <div className="_3xUpb5DWXPFNcHHIcv-9pe avatarStatus"></div>
+                        <img className="_3h-QRJGxnVOIExtHD1R0f2 avatar player-avatar-img" draggable="false" src={track.image_url || "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg"} />
+                    </div>
                 </div>
             ) : (
-                <div className="glass-player DialogBody ModalPosition">
-                    {/* Upper Header Row */}
-                    <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                        {track.image_url ? (
-                            <img src={track.image_url} style={{ width: "48px", height: "48px", borderRadius: "var(--dialog-button-border-radius, var(--DialogRadius, 6px))", boxShadow: "0 4px 12px rgba(0,0,0,0.4)" }} />
-                        ) : (
-                            <div style={{ width: "48px", height: "48px", borderRadius: "var(--dialog-button-border-radius, var(--DialogRadius, 6px))", background: "var(--brand-primary, var(--brand-color, #1DB954))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>
-                                ♫
+                <div className="friendlist FriendsListContent DialogBody ModalPosition glass-player">
+                    {/* Upper Header Row styled as a Community Friend Item */}
+                    <div className="currentUserContainer ingame player-header">
+                        <svg className="statusHeaderGlow" width="100%" height="100%" style={{ position: "absolute", top: 0, left: 0, zIndex: 0, opacity: 0.5, pointerEvents: "none" }} xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <radialGradient id="spotifyGreenGlow" cx="20%" cy="30%" r="60%">
+                                    <stop offset="0%" stopColor="#90ba3c" stopOpacity="0.4"></stop>
+                                    <stop offset="100%" stopColor="transparent"></stop>
+                                </radialGradient>
+                            </defs>
+                            <ellipse cx="20%" cy="30%" rx="80%" ry="70%" fill="url(#spotifyGreenGlow)"></ellipse>
+                        </svg>
+
+                        <div className="AvatarAndUser player-avatar-and-user">
+                            <div className="currentUserAvatar">
+                                <div className="nibodjvvrm86uCfnnAn4g avatarHolder no-drag Medium ingame player-avatar-holder">
+                                    <div className="_3xUpb5DWXPFNcHHIcv-9pe avatarStatus"></div>
+                                    <img className="_3h-QRJGxnVOIExtHD1R0f2 avatar player-avatar-img" draggable="false" src={track.image_url || "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg"} />
+                                </div>
                             </div>
-                        )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: "bold", fontSize: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={track.name}>
-                                {track.name}
-                            </div>
-                            <div style={{ color: "var(--text-muted, #a3a3ac)", fontSize: "12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={track.artist}>
-                                {track.artist}
+
+                            <div className="labelHolder ingame _1BbOegz8bYL7iPzgYpOgQI player-label-holder">
+                                <div className="_4ZTzGZ5TTgFyfw1DcXLXS player-title-row">
+                                    <div className="nOdcT-MoOaXGePXLyPe0H player-title" title={track.name} style={{ marginRight: "32px" }}>
+                                        {track.name}
+                                    </div>
+                                </div>
+                                <div className="_3sxE7F1LV2IcSX68YsH9dI">
+                                    <div className="_1cB0qtF0paHWWyj1XNcnbG _2Ri005Wg_uXDTa71kdRbcN no-drag player-artist" title={track.artist}>
+                                        {track.artist}
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        <button onClick={() => toggleCollapsed(true)} style={{ background: "none", border: "none", color: "var(--text-muted, #a3a3ac)", fontSize: "14px", cursor: "pointer", padding: "4px" }}>
-                            ✕
-                        </button>
+
+                        {/* Top-Right Themed Window Control Close Button */}
+                        <div className="title-bar-actions window-controls">
+                            <div className="title-area-icon closeButton windowControlButton" onClick={() => toggleCollapsed(true)} title="Minimize Player">
+                                <div className="title-area-icon-inner">
+                                    <svg version="1.1" id="Layer_2" xmlns="http://www.w3.org/2000/svg" className="SVGIcon_Button SVGIcon_X_Line" x="0px" y="0px" width="256px" height="256px" viewBox="0 0 256 256">
+                                        <line fill="none" stroke="#FFFFFF" strokeWidth="45" strokeMiterlimit="10" x1="212" y1="212" x2="44" y2="44"></line>
+                                        <line fill="none" stroke="#FFFFFF" strokeWidth="45" strokeMiterlimit="10" x1="44" y1="212" x2="212" y2="44"></line>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Progress Bar & Durations */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <div style={{ height: "4px", background: "var(--dialog-slider-track-bg, var(--SliderTrackBG, rgba(255, 255, 255, 0.15)))", borderRadius: "2px", position: "relative", overflow: "hidden" }}>
-                            <div style={{
-                                height: "100%",
-                                background: "var(--brand-primary, var(--brand-color, #1DB954))",
-                                borderRadius: "2px",
-                                width: `${progressPercent}%`,
-                                transition: track.is_playing ? "width 1s linear" : "none"
-                            }} />
+                    <div className="player-progress-container">
+                        <div className="player-progress-track">
+                            <div className="player-progress-bar" style={{ width: `${progressPercent}%` }} />
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "var(--text-muted, #a3a3ac)" }}>
+                        <div className="player-durations">
                             <span>{formatTime(localProgress)}</span>
                             <span>{formatTime(track.duration_ms)}</span>
                         </div>
                     </div>
 
                     {/* Controls Row */}
-                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "10px", marginTop: "4px" }}>
+                    <div className="player-controls">
                         <button 
                             type="button" 
-                            className={`_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`} 
+                            className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`} 
                             onClick={() => handleCommand("shuffle")} 
                             title={`Shuffle: ${isShuffleActive ? 'On' : 'Off'}`}
-                            style={isShuffleActive ? { color: "var(--brand-primary, var(--brand-color, #1DB954))" } : undefined}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path fill-rule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
+                                <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
                             </svg>
                         </button>
                         <button 
                             type="button" 
-                            className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn" 
+                            className="DialogButton Secondary Focusable control-btn" 
                             onClick={() => handleCommand("previous")} 
                             title="Previous Track"
                         >
@@ -253,7 +567,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                         {track.is_playing ? (
                             <button 
                                 type="button" 
-                                className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E Upr_VRmq8Pb8RWegwuVYb DialogButton _DialogLayout Secondary Focusable control-btn control-btn-play" 
+                                className="DialogButton Secondary Focusable control-btn control-btn-play" 
                                 onClick={() => handleCommand("pause")} 
                                 title="Pause"
                             >
@@ -264,7 +578,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                         ) : (
                             <button 
                                 type="button" 
-                                className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E Upr_VRmq8Pb8RWegwuVYb DialogButton _DialogLayout Secondary Focusable control-btn control-btn-play" 
+                                className="DialogButton Secondary Focusable control-btn control-btn-play" 
                                 onClick={() => handleCommand("play")} 
                                 title="Play"
                             >
@@ -275,7 +589,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                         )}
                         <button 
                             type="button" 
-                            className="_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn" 
+                            className="DialogButton Secondary Focusable control-btn" 
                             onClick={() => handleCommand("next")} 
                             title="Next Track"
                         >
@@ -285,10 +599,9 @@ export const SpotifyMiniPlayer: React.FC = () => {
                         </button>
                         <button 
                             type="button" 
-                            className={`_1iFnR7cGRa1kepep433pGx h782PaUbu8xm3afLFh83E DialogButton _DialogLayout Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`} 
+                            className={`DialogButton Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`} 
                             onClick={() => handleCommand("repeat")} 
                             title={repeatTitle}
-                            style={isRepeatActive ? { color: "var(--brand-primary, var(--brand-color, #1DB954))" } : undefined}
                         >
                             {track.repeat_state === "track" ? (
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none" style={{ position: 'relative' }}>

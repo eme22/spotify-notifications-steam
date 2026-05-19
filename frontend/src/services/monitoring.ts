@@ -133,8 +133,11 @@ export async function startMonitoring() {
             duration_ms: track.duration_ms || 0,
             progress_ms: data.progress_ms || 0,
             is_playing: data.is_playing ?? false,
+            is_paused: data.is_playing === false,
+            is_stopped: false,
             shuffle_state: data.shuffle_state ?? false,
-            repeat_state: data.repeat_state ?? "off"
+            repeat_state: data.repeat_state ?? "off",
+            timestamp: Date.now()
         };
 
         // Update global track state and broadcast
@@ -328,6 +331,9 @@ export async function startMonitoring() {
                 }
             }
 
+            let isPaused = data.is_paused === true;
+            let isStopped = data.is_stopped === true;
+
             trackInfo = {
                 name: track,
                 artist: "Unknown Artist",
@@ -336,9 +342,12 @@ export async function startMonitoring() {
                 id: track,
                 duration_ms: data.duration_ms || data.duration || 0,
                 progress_ms: data.progress_ms ?? data.progress ?? 0,
-                is_playing: isPlaying,
+                is_playing: isPlaying && !isPaused && !isStopped,
+                is_paused: isPaused,
+                is_stopped: isStopped,
                 shuffle_state: data.shuffle_active ?? data.shuffle ?? data.shuffle_state ?? false,
-                repeat_state: repeatVal
+                repeat_state: repeatVal,
+                timestamp: Date.now()
             };
         } else if (typeof track === "object") {
             let isPlaying = true;
@@ -349,6 +358,9 @@ export async function startMonitoring() {
             } else if (track.is_playing !== undefined && track.is_playing !== null) {
                 isPlaying = track.is_playing;
             }
+
+            let isPaused = data.is_paused === true || track.is_paused === true;
+            let isStopped = data.is_stopped === true || track.is_stopped === true;
 
             let repeatVal = "off";
             if (data.repeat_mode !== undefined && data.repeat_mode !== null) {
@@ -376,9 +388,12 @@ export async function startMonitoring() {
                 id: track.id || track.name || "",
                 duration_ms: track.duration_ms || data.duration_ms || data.duration || 0,
                 progress_ms: track.progress_ms ?? data.progress_ms ?? track.progress ?? data.progress ?? 0,
-                is_playing: isPlaying,
+                is_playing: isPlaying && !isPaused && !isStopped,
+                is_paused: isPaused,
+                is_stopped: isStopped,
                 shuffle_state: data.shuffle_active ?? track.shuffle ?? data.shuffle ?? track.shuffle_state ?? data.shuffle_state ?? false,
-                repeat_state: repeatVal
+                repeat_state: repeatVal,
+                timestamp: Date.now()
             };
         }
 
@@ -392,7 +407,7 @@ export async function startMonitoring() {
             const now = Date.now();
             console.debug(`Checking notification condition: trackInfo.id="${trackInfo.id}" vs lastTrackId="${lastTrackId}", is_playing=${trackInfo.is_playing}`);
             
-            if (trackInfo.id !== lastTrackId && trackInfo.is_playing) {
+            if (trackInfo.id !== lastTrackId && trackInfo.is_playing && !trackInfo.is_paused && !trackInfo.is_stopped) {
                 const timeDiff = now - lastNotificationTime;
                 const requiredDiff = minNotificationInterval * 1000;
                 console.debug(`Notification trigger check: timeDiff=${timeDiff}ms vs requiredDiff=${requiredDiff}ms`);

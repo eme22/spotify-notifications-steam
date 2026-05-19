@@ -16,7 +16,7 @@ export class SpotifyNotifications {
                     style={{ 
                         width: '48px', 
                         height: '48px', 
-                        borderRadius: '6px',
+                        borderRadius: 'var(--dialog-button-border-radius, var(--DialogRadius, var(--gpCorner-Medium, var(--gpCorner-Small, 6px))))',
                         boxShadow: '0 4px 10px rgba(0,0,0,0.3)',
                         objectFit: 'cover'
                     }} 
@@ -26,7 +26,7 @@ export class SpotifyNotifications {
                     style={{ 
                         width: '48px', 
                         height: '48px', 
-                        borderRadius: '6px',
+                        borderRadius: 'var(--dialog-button-border-radius, var(--DialogRadius, var(--gpCorner-Medium, var(--gpCorner-Small, 6px))))',
                         background: '#1DB954',
                         display: 'flex',
                         alignItems: 'center',
