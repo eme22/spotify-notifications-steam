@@ -4,6 +4,7 @@ import { currentTrackState } from "./src/services/state";
 import { startOverlayPolling } from "./src/components/SpotifyMiniPlayer";
 import { SpotifySettingsIcon, NativeSettingsPanel } from "./src/components/NativeSettingsPanel";
 import { console } from "./src/utils/logger";
+import { initializeLocalization, t } from "./src/utils/localization";
 
 // Satisfy TypeScript compiler for JSX elements in custom bundling contexts
 declare global {
@@ -16,7 +17,11 @@ declare global {
 
 // Frontend plugin entry point
 export default async function PluginMain() {
-    console.debug(`[Spotify Notifications] Frontend loaded in window: "${document.title}"`);
+    // Detect and initialize Steam Client language
+    const language = await (window as any).SteamClient?.Settings?.GetCurrentLanguage?.() || "english";
+    initializeLocalization(language);
+
+    console.debug(`[Spotify Notifications] Frontend loaded in window: "${document.title}" with language: "${language}"`);
     
     const isBackground = document.title === "SharedJSContext";
 
@@ -56,7 +61,7 @@ export default async function PluginMain() {
 
     // Register our plugin settings natively in Steam client Settings page
     return {
-        title: "Spotify Notifications",
+        title: t("pluginTitle"),
         icon: <SpotifySettingsIcon />,
         content: <NativeSettingsPanel />
     };

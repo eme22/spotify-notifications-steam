@@ -4,6 +4,7 @@ import { console } from "../utils/logger";
 import { SpotifyNotifications } from "./notifications";
 import { updateTrackState } from "./state";
 import { callable } from "@steambrew/client";
+import { t } from "../utils/localization";
 
 const getWindowsMedia = callable<[], string>("get_windows_media");
 const controlWindowsMedia = callable<[{ command: string }], string>("control_windows_media");
@@ -174,7 +175,7 @@ export async function startMonitoring() {
                         if (now - lastNotificationTime >= minNotificationInterval * 1000) {
                             lastTrackId = trackInfo.id;
                             lastNotificationTime = now;
-                            SpotifyNotifications.sendNotification("Now Playing", trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                            SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
                         }
                     }
                 }
@@ -232,7 +233,7 @@ export async function startMonitoring() {
                 if (now - lastNotificationTime >= minNotificationInterval * 1000) {
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    SpotifyNotifications.sendNotification("Now Playing", trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
                 }
             }
         }
@@ -498,7 +499,7 @@ export async function startMonitoring() {
                     console.debug(`Triggering 'Now Playing' notification for track: ${trackInfo.name}`);
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    SpotifyNotifications.sendNotification("Now Playing", trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
                 } else {
                     console.warn(`Notification skipped (throttled): timeDiff=${timeDiff}ms is less than required ${requiredDiff}ms.`);
                 }

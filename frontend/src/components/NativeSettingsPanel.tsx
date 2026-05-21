@@ -10,6 +10,7 @@ import React, { useState } from "react";
 import { STORAGE_KEYS } from "../constants/keys";
 import { startMonitoring, stopMonitoring, exchangeAuthCode, postToChannel } from "../services/monitoring";
 import { SpotifyNotifications } from "../services/notifications";
+import { t } from "../utils/localization";
 
 export const SpotifySettingsIcon: React.FC = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="#1DB954" style={{ marginRight: '8px', verticalAlign: 'middle' }}>
@@ -62,8 +63,8 @@ export const NativeSettingsPanel: React.FC = () => {
         postToChannel({ type: "SETTINGS_UPDATED" });
 
         toaster.toast({
-            title: "Spotify Settings",
-            body: "Native settings successfully saved!",
+            title: t("toastSavedTitle"),
+            body: t("toastSavedBody"),
             eType: 1
         } as any);
     };
@@ -71,8 +72,8 @@ export const NativeSettingsPanel: React.FC = () => {
     const handleAuthenticate = () => {
         if (!clientId) {
             toaster.toast({
-                title: "Spotify Settings Error",
-                body: "Spotify Client ID is required for authentication.",
+                title: t("toastErrorTitle"),
+                body: t("toastErrorClientIdRequired"),
                 eType: 2
             } as any);
             return;
@@ -83,8 +84,8 @@ export const NativeSettingsPanel: React.FC = () => {
         const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scopes}`;
         
         toaster.toast({
-            title: "Spotify Auth",
-            body: "Opening authorization URL in browser...",
+            title: t("toastAuthTitle"),
+            body: t("toastAuthOpening"),
             eType: 1
         } as any);
         window.open(authUrl, "_blank");
@@ -93,8 +94,8 @@ export const NativeSettingsPanel: React.FC = () => {
     const handleExchangeCode = async () => {
         if (!clientId || !clientSecret || !authCode) {
             toaster.toast({
-                title: "Spotify Settings Error",
-                body: "Client ID, Client Secret, and Auth Code/URL are required.",
+                title: t("toastErrorTitle"),
+                body: t("toastErrorCredentialsRequired"),
                 eType: 2
             } as any);
             return;
@@ -115,16 +116,16 @@ export const NativeSettingsPanel: React.FC = () => {
 
             setAuthCode("");
             toaster.toast({
-                title: "Spotify Settings",
-                body: "Successfully linked Spotify account!",
+                title: t("toastSavedTitle"),
+                body: t("toastAuthLinked"),
                 eType: 1
             } as any);
             
             saveSettings();
         } catch (err: any) {
             toaster.toast({
-                title: "Spotify Auth Error",
-                body: err.message || "Failed to exchange authorization code.",
+                title: t("toastAuthErrorTitle"),
+                body: err.message || t("toastAuthExchangeFailed"),
                 eType: 2
             } as any);
         }
@@ -132,30 +133,30 @@ export const NativeSettingsPanel: React.FC = () => {
 
     const triggerTestNotification = () => {
         SpotifyNotifications.sendNotification(
-            "Spotify Notifications",
+            t("pluginTitle"),
             "https://accounts.spotify.com/images/favicon.png",
-            "Get Ready for Premium Tunes!",
-            "Antigravity AI",
-            "Steam Integration",
+            t("testNotifBody"),
+            t("testNotifArtist"),
+            t("testNotifAlbum"),
             playSound
         );
     };
 
     const modeOptions = [
-        { data: "playback", label: "Local Playback Server (Socket)" },
-        { data: "webapi", label: "Spotify Web API (Remote Auth)" },
-        { data: "winmedia", label: "Windows Media Playback API (GSMTC)" }
+        { data: "playback", label: t("modeLocalServer") },
+        { data: "webapi", label: t("modeWebApi") },
+        { data: "winmedia", label: t("modeWinMedia") }
     ];
 
     return (
         <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <div style={{ fontSize: "14px", color: "#e1e2e6", fontWeight: 600 }}>Connection Mode</div>
-                <div style={{ fontSize: "12px", color: "#a3a3ac", marginBottom: "4px" }}>Select how the plugin connects to Spotify</div>
+                <div style={{ fontSize: "14px", color: "#e1e2e6", fontWeight: 600 }}>{t("connectionMode")}</div>
+                <div style={{ fontSize: "12px", color: "#a3a3ac", marginBottom: "4px" }}>{t("connectionModeDesc")}</div>
                 <Dropdown
                     rgOptions={modeOptions}
                     selectedOption={mode}
-                    renderButtonValue={() => modeOptions.find(opt => opt.data === mode)?.label || "Select Connection Mode"}
+                    renderButtonValue={() => modeOptions.find(opt => opt.data === mode)?.label || t("selectConnectionMode")}
                     onChange={(opt) => setMode(opt.data)}
                 />
             </div>
@@ -163,14 +164,14 @@ export const NativeSettingsPanel: React.FC = () => {
             {mode === "playback" && (
                 <>
                     <TextField
-                        label="Server Host"
-                        description="IP address of the local Spotify Playback server"
+                        label={t("serverHost")}
+                        description={t("serverHostDesc")}
                         value={host}
                         onChange={(e) => setHost(e.target.value)}
                     />
                     <TextField
-                        label="Server Port"
-                        description="Port of the local Spotify Playback server"
+                        label={t("serverPort")}
+                        description={t("serverPortDesc")}
                         value={port}
                         onChange={(e) => setPort(e.target.value)}
                     />
@@ -180,33 +181,33 @@ export const NativeSettingsPanel: React.FC = () => {
             {mode === "webapi" && (
                 <>
                     <TextField
-                        label="Spotify Client ID"
-                        description="Client ID from your Spotify Developer Dashboard"
+                        label={t("clientId")}
+                        description={t("clientIdDesc")}
                         value={clientId}
                         onChange={(e) => setClientId(e.target.value)}
                     />
                     <TextField
-                        label="Spotify Client Secret"
-                        description="Client Secret from your Spotify Developer Dashboard"
+                        label={t("clientSecret")}
+                        description={t("clientSecretDesc")}
                         bIsPassword={true}
                         value={clientSecret}
                         onChange={(e) => setClientSecret(e.target.value)}
                     />
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "10px", background: "rgba(0, 0, 0, 0.15)", borderRadius: "6px" }}>
                         <div style={{ fontSize: "12px", color: "#a3a3ac" }}>
-                            Authenticate with Spotify to get your authorization code:
+                            {t("authInstruction")}
                         </div>
                         <ButtonItem onClick={handleAuthenticate}>
-                            1. Authenticate Spotify Account
+                            {t("authBtn1")}
                         </ButtonItem>
                         <TextField
-                            label="Authorization Code / URL"
-                            description="Paste the redirect code or the complete URL here"
+                            label={t("authCodeUrl")}
+                            description={t("authCodeUrlDesc")}
                             value={authCode}
                             onChange={(e) => setAuthCode(e.target.value)}
                         />
                         <ButtonItem onClick={handleExchangeCode} disabled={!authCode}>
-                            2. Exchange Code & Save
+                            {t("authBtn2")}
                         </ButtonItem>
                     </div>
                 </>
@@ -214,29 +215,29 @@ export const NativeSettingsPanel: React.FC = () => {
 
             {mode === "winmedia" && (
                 <div style={{ padding: "12px", background: "rgba(0, 0, 0, 0.15)", borderRadius: "6px", fontSize: "12px", color: "#a3a3ac", display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <div style={{ fontWeight: 600, color: "#e1e2e6" }}>Windows Media Playback Mode</div>
-                    <div>No additional setup is required. The plugin will monitor and control media from Windows APIs directly, supporting Spotify and any other media players.</div>
+                    <div style={{ fontWeight: 600, color: "#e1e2e6" }}>{t("winMediaHeader")}</div>
+                    <div>{t("winMediaDesc")}</div>
                 </div>
             )}
 
             <ToggleField
-                label="Sync with Steam Native Player"
-                description="Synchronize playback commands, progress bar seek, and media controls in real-time"
+                label={t("syncNative")}
+                description={t("syncNativeDesc")}
                 checked={syncNative}
                 onChange={(val) => setSyncNative(val)}
             />
 
             <ToggleField
-                label="Sync Volume Control"
-                description="Synchronize Steam's native music volume slider with Spotify player volume"
+                label={t("syncVolume")}
+                description={t("syncVolumeDesc")}
                 checked={syncVolume}
                 disabled={!syncNative}
                 onChange={(val) => setSyncVolume(val)}
             />
 
             <ToggleField
-                label="Play Notification Sound"
-                description="Play a subtle alert tone when displaying notifications"
+                label={t("playSound")}
+                description={t("playSoundDesc")}
                 checked={playSound}
                 onChange={(val) => setPlaySound(val)}
             />
@@ -244,8 +245,8 @@ export const NativeSettingsPanel: React.FC = () => {
             {mode === "webapi" && (
                 <>
                     <SliderField
-                        label="Web API Polling Interval"
-                        description="Interval in seconds to check for new tracks"
+                        label={t("pollingInterval")}
+                        description={t("pollingIntervalDesc")}
                         min={1.0}
                         max={10.0}
                         step={0.5}
@@ -255,8 +256,8 @@ export const NativeSettingsPanel: React.FC = () => {
                         onChange={(val) => setPollingInterval(val)}
                     />
                     <SliderField
-                        label="Web API Minimum Notification Interval"
-                        description="Minimum time in seconds between subsequent notifications"
+                        label={t("minInterval")}
+                        description={t("minIntervalDesc")}
                         min={1.0}
                         max={10.0}
                         step={0.5}
@@ -269,8 +270,8 @@ export const NativeSettingsPanel: React.FC = () => {
             )}
 
             <div style={{ display: "flex", gap: "12px", marginTop: "10px" }}>
-                <ButtonItem onClick={saveSettings}>Save Settings</ButtonItem>
-                <ButtonItem onClick={triggerTestNotification}>Test Notification</ButtonItem>
+                <ButtonItem onClick={saveSettings}>{t("saveSettings")}</ButtonItem>
+                <ButtonItem onClick={triggerTestNotification}>{t("testNotification")}</ButtonItem>
             </div>
         </div>
     );

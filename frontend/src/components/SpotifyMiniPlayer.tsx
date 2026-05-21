@@ -4,6 +4,7 @@ import { postToChannel, listenToChannel } from "../services/monitoring";
 import { currentTrackState, onTrackChange } from "../services/state";
 import { formatTime } from "../utils/helpers";
 import { console } from "../utils/logger";
+import { t } from "../utils/localization";
 
 export const SpotifyMiniPlayer: React.FC = () => {
     const [track, setTrack] = useState<any>(currentTrackState);
@@ -164,7 +165,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
     const progressPercent = track.duration_ms > 0 ? (localProgress / track.duration_ms) * 100 : 0;
     const isShuffleActive = track.shuffle_state === true;
     const isRepeatActive = track.repeat_state === "context" || track.repeat_state === "track";
-    const repeatTitle = track.repeat_state === "track" ? "Repeat: One" : track.repeat_state === "context" ? "Repeat: All" : "Repeat: Off";
+    const repeatTitle = track.repeat_state === "track" ? t("repeatOne") : track.repeat_state === "context" ? t("repeatAll") : t("repeatOff");
 
     const playerRef = useRef<HTMLDivElement>(null);
     const [position, setPosition] = useState<{ x: number; y: number } | null>(() => {
@@ -476,7 +477,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
             `}</style>
 
             {isCollapsed ? (
-                <div onClick={() => toggleCollapsed(false)} className="friendlist FriendsListContent DialogBody ModalPosition" style={{ cursor: "pointer" }} title="Open Spotify Controller">
+                <div onClick={() => toggleCollapsed(false)} className="friendlist FriendsListContent DialogBody ModalPosition" style={{ cursor: "pointer" }} title={t("miniPlayerOpen")}>
                     <div className="nibodjvvrm86uCfnnAn4g avatarHolder no-drag Medium ingame player-collapsed-avatar">
                         <div className="_3xUpb5DWXPFNcHHIcv-9pe avatarStatus"></div>
                         <img className="_3h-QRJGxnVOIExtHD1R0f2 avatar player-avatar-img" draggable="false" src={track.image_url || "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg"} />
@@ -520,7 +521,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
                         {/* Top-Right Themed Window Control Close Button */}
                         <div className="title-bar-actions window-controls">
-                            <div className="title-area-icon closeButton windowControlButton" onClick={() => toggleCollapsed(true)} title="Minimize Player">
+                            <div className="title-area-icon closeButton windowControlButton" onClick={() => toggleCollapsed(true)} title={t("miniPlayerMinimize")}>
                                 <div className="title-area-icon-inner">
                                     <svg version="1.1" id="Layer_2" xmlns="http://www.w3.org/2000/svg" className="SVGIcon_Button SVGIcon_X_Line" x="0px" y="0px" width="256px" height="256px" viewBox="0 0 256 256">
                                         <line fill="none" stroke="#FFFFFF" strokeWidth="45" strokeMiterlimit="10" x1="212" y1="212" x2="44" y2="44"></line>
@@ -548,7 +549,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                             type="button" 
                             className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`} 
                             onClick={() => handleCommand("shuffle")} 
-                            title={`Shuffle: ${isShuffleActive ? 'On' : 'Off'}`}
+                            title={isShuffleActive ? t("shuffleOn") : t("shuffleOff")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                 <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
@@ -558,7 +559,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                             type="button" 
                             className="DialogButton Secondary Focusable control-btn" 
                             onClick={() => handleCommand("previous")} 
-                            title="Previous Track"
+                            title={t("prevTrack")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                 <path fill-rule="evenodd" clip-rule="evenodd" d="M32.013 31.27a1 1 0 0 1-1.499.868L10 20.335V30a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v9.665L30.514 3.862a1 1 0 0 1 1.499.867v26.542Z" fill="currentColor"></path>
@@ -569,7 +570,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 type="button" 
                                 className="DialogButton Secondary Focusable control-btn control-btn-play" 
                                 onClick={() => handleCommand("pause")} 
-                                title="Pause"
+                                title={t("pause")}
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                     <path fill-rule="evenodd" clip-rule="evenodd" d="M6 6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6Zm16 0a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V6Z" fill="currentColor"></path>
@@ -580,7 +581,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 type="button" 
                                 className="DialogButton Secondary Focusable control-btn control-btn-play" 
                                 onClick={() => handleCommand("play")} 
-                                title="Play"
+                                title={t("play")}
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                     <path d="M7.5 32.135a1 1 0 0 1-1.5-.866V4.73a1 1 0 0 1 1.5-.866l22.999 13.269a1 1 0 0 1 0 1.732l-23 13.269Z" fill="currentColor"></path>
@@ -591,7 +592,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                             type="button" 
                             className="DialogButton Secondary Focusable control-btn" 
                             onClick={() => handleCommand("next")} 
-                            title="Next Track"
+                            title={t("nextTrack")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                 <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
