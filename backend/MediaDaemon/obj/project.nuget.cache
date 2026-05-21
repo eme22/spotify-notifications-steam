@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "0bYh593alSg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\MSB19\\Downloads\\spotify-notifications-steam\\backend\\MediaDaemon\\MediaDaemon.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\MSB19\\.nuget\\packages\\microsoft.net.illink.tasks\\9.0.6\\microsoft.net.illink.tasks.9.0.6.nupkg.sha512",
+    "C:\\Users\\MSB19\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.57\\microsoft.windows.sdk.net.ref.10.0.19041.57.nupkg.sha512"
+  ],
+  "logs": []
+}

@@ -1,0 +1,17 @@
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.exe
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.deps.json
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.runtimeconfig.json
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.dll
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.pdb
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\Microsoft.Windows.SDK.NET.dll
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\bin\Release\net9.0-windows10.0.19041.0\win-x64\WinRT.Runtime.dll
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.AssemblyInfoInputs.cache
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.AssemblyInfo.cs
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.csproj.CoreCompileInputs.cache
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDae.AFA2DFD9.Up2Date
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.dll
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\refint\MediaDaemon.dll
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.pdb
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\MediaDaemon.genruntimeconfig.cache
+C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon\obj\Release\net9.0-windows10.0.19041.0\win-x64\ref\MediaDaemon.dll
