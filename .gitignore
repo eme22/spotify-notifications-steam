@@ -7,3 +7,11 @@ package-lock.json
 yarn.lock
 backend/__pycache__/
 backend/.env
+
+# C# Daemon build directories
+backend/MediaDaemon/bin/
+backend/MediaDaemon/obj/
+
+# Runtime state/command files
+backend/media_state.json
+backend/media_command.txt

@@ -1,2 +1,0 @@
-C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon.pdb
-C:\Users\MSB19\Downloads\spotify-notifications-steam\backend\MediaDaemon.exe
