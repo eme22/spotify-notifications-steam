@@ -15,6 +15,7 @@ A high-performance Millennium plugin that integrates Spotify and Windows System 
   - **Windows Media Mode (Recommended)**: Plug-and-play. Grabs active media details directly from Windows with base64 album artwork.
   - **Spotify Playback & Web API Modes**: Legacy modes that support connecting directly to Spotify's APIs (with automatic token refreshing and OAuth).
 - 🎨 **Rich Notifications**: Displays album artwork, artist names, song titles, and playback status directly in Steam's native notification system.
+- 🌐 **Multilingual Support (New!)**: Dynamically localizes all settings panels, tooltips, playback control labels, and notifications in **English, Spanish, and Portuguese** depending on the Steam Client's active language.
 - ⚙️ **Steam Native Control Panel**: Press `Ctrl+Shift+S` to open the settings interface inside Steam to select your preferred media source and adjust notification preferences.
 
 ---
