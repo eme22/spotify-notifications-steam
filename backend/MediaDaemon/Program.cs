@@ -288,8 +288,55 @@ namespace MediaDaemon
                 // Extract base64 thumbnail ONLY if track changed or thumbnail is uncached
                 if (currentTrackId != _lastTrackId || string.IsNullOrEmpty(_cachedThumbnailBase64))
                 {
+                    string oldThumbnail = _cachedThumbnailBase64;
                     _cachedThumbnailBase64 = "";
-                    if (props.Thumbnail != null)
+
+                    if (currentTrackId != _lastTrackId && !string.IsNullOrEmpty(oldThumbnail))
+                    {
+                        // Track has changed. We want to avoid writing the previous track's thumbnail.
+                        // Retry up to 5 times (with 150ms delay) to let Windows SMTC update the thumbnail reference.
+                        int attempts = 5;
+                        while (attempts > 0)
+                        {
+                            if (props.Thumbnail != null)
+                            {
+                                try
+                                {
+                                    using var stream = await props.Thumbnail.OpenReadAsync();
+                                    using var reader = new DataReader(stream);
+                                    await reader.LoadAsync((uint)stream.Size);
+                                    var bytes = new byte[stream.Size];
+                                    reader.ReadBytes(bytes);
+                                    string extracted = Convert.ToBase64String(bytes);
+
+                                    if (extracted != oldThumbnail)
+                                    {
+                                        _cachedThumbnailBase64 = extracted;
+                                        break;
+                                    }
+                                }
+                                catch
+                                {
+                                    // Suppress and retry
+                                }
+                            }
+
+                            attempts--;
+                            if (attempts > 0)
+                            {
+                                await Task.Delay(150);
+                                var newProps = await session.TryGetMediaPropertiesAsync();
+                                if (newProps != null)
+                                {
+                                    props = newProps;
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback / standard extraction if it's the first track, or if retry loop didn't succeed,
+                    // or if props.Thumbnail is null (meaning no image)
+                    if (string.IsNullOrEmpty(_cachedThumbnailBase64) && props.Thumbnail != null)
                     {
                         try
                         {
