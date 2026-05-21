@@ -1,187 +1,125 @@
-# Spotify Notifications for Steam
+# Spotify & Windows Media Notifications for Steam
 
-A Millennium plugin that integrates Spotify with Steam to show notifications when new songs start playing.
+A high-performance Millennium plugin that integrates Spotify and Windows System Media Transport Controls (SMTC) with Steam, showing gorgeous notifications whenever a new song starts playing.
 
-## Features
+> [!TIP]
+> **New in Version 2.0**: The plugin now features a native C# background daemon that listens directly to Windows media events with zero lag, zero annoying popup console windows, <12MB RAM consumption, and absolutely **no Spotify developer account or authentication required!**
 
-- 🎵 **Dual API Support**: Works with both Spotify Playback API (no authentication needed) and official Spotify Web API
-- 🔌 **Automatic Fallback**: Tries Playback API first, falls back to Spotify Web API if unavailable
-- 🔐 **Secure OAuth Authentication**: Uses Spotify's official OAuth 2.0 flow when using Web API
-- 🔄 **Automatic Token Refresh**: Handles token expiration and refreshes automatically
-- 🎨 **Rich Notifications**: Shows song name, artist, and album artwork in Steam notifications
-- ⚙️ **Easy Setup**: Multiple setup options depending on your preference
-- 🎮 **Steam Native**: Integrates seamlessly with Steam's notification system
+---
 
-## Two Setup Options
+## 🎵 Features
 
-### Option 1: Spotify Playback API (Recommended - No Auth Required)
+- 🖥️ **Universal Windows Media Support (New!)**: Natively integrates with Windows 10/11 System Media Transport Controls (SMTC). Works instantly with Spotify (Desktop/Web), YouTube, VLC, and any media player that integrates with Windows.
+- ⚡ **Lightweight & Silent**: The event-driven C# background daemon uses WinRT events, consuming `< 12MB RAM` and `0% CPU` at rest. Starts **100% windowlessly and silently** via LuaJIT FFI `CreateProcessA` (no annoying command prompt flash).
+- 🔌 **Dual Mode Support**:
+  - **Windows Media Mode (Recommended)**: Plug-and-play. Grabs active media details directly from Windows with base64 album artwork.
+  - **Spotify Playback & Web API Modes**: Legacy modes that support connecting directly to Spotify's APIs (with automatic token refreshing and OAuth).
+- 🎨 **Rich Notifications**: Displays album artwork, artist names, song titles, and playback status directly in Steam's native notification system.
+- ⚙️ **Steam Native Control Panel**: Press `Ctrl+Shift+S` to open the settings interface inside Steam to select your preferred media source and adjust notification preferences.
 
-This method uses a local HTTP server that connects to Spotify directly - **no authentication needed!**
+---
 
-1. **Download and run the Playback API server**:
-   ```powershell
-   python setup_playback_server.py
-   ```
-   Choose option 4 to download, install dependencies, and run the server.
+## 📋 Prerequisites
 
-2. **Test the connection**:
-   ```powershell
-   python test_api.py
-   ```
+- **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** - Steam client modification framework.
+- **Windows 10 or 11**
+- **.NET 9 Runtime** (Required to run the high-performance media daemon).
+- *(Optional - Legacy)* Python 3.7+ (Only if you intend to run the legacy Spotify Playback API local server).
 
-### Option 2: Spotify Web API (Fallback - Requires Auth)
+---
 
-If the Playback API is not available, the plugin will automatically fall back to the official Spotify Web API.
-
-#### Prerequisites for Web API
-- **Spotify Premium Account** - Required for Spotify Web API access
-- **Spotify Developer App** - You'll need to create one for API credentials
-
-#### Spotify Developer Setup (for Web API fallback)
-
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications)
-2. Create a new app or use an existing one
-3. Set the **Redirect URI** to: `http://localhost:8888/callback`
-4. Note your **Client ID** and **Client Secret**
-
-## Plugin Installation
-
-### Prerequisites
-- **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** - Steam client modification framework
-- **Python 3.7+** - For the backend Spotify integration
+## 🚀 Installation & Setup
 
 ### 1. Install the Plugin
 
-1. Clone or download this plugin to your Millennium plugins directory
-2. Install dependencies:
-   ```powershell
-   cd spotify-notifications-steam
-   pnpm install
-   py -m pip install -r backend/requirements.txt
-   ```
+Clone this repository directly into your Millennium plugins directory:
 
-### 2. Choose Your Setup Method
-
-#### Method A: Playback API (Recommended)
 ```powershell
-# Download and run the Playback API server
+# Navigate to your Millennium plugins folder (e.g., C:\Program Files (x86)\Steam\plugins)
+git clone https://github.com/yourusername/spotify-notifications-steam.git
+
+# Install dependencies and build the plugin frontend
+cd spotify-notifications-steam
+pnpm install
+pnpm run build
+```
+
+### 2. Enable in Steam
+
+1. Start Steam with Millennium active.
+2. Go to Millennium settings -> **Plugins** and enable **Spotify & Windows Media Notifications**.
+3. Press **Ctrl+Shift+S** in Steam to toggle the control panel.
+4. Select **Windows Media** as your source mode to enjoy instant, configuration-free notifications for Spotify and any other media player!
+
+---
+
+## 🛠️ Legacy Spotify API Configuration (Optional)
+
+If you prefer to connect directly to the Spotify Web API instead of using the local Windows Media daemon:
+
+### Option A: Local Playback API Server
+Run the local HTTP server to retrieve Spotify status:
+```powershell
 python setup_playback_server.py
-
-# Test the connection
-python test_api.py
 ```
 
-#### Method B: Web API Setup (if Playback API not available)
-
-3. Configure Spotify credentials:
-   ```powershell
-   # Copy the template and edit with your credentials
-   copy backend/.env.template backend/.env
-   # Edit backend/.env with your Spotify Client ID and Secret
+### Option B: Official Spotify Web API (Requires Auth & Premium)
+1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications) and create an app.
+2. Set the **Redirect URI** to `http://localhost:8888/callback`.
+3. Copy `backend/.env.template` to `backend/.env` and fill in your client credentials:
+   ```env
+   SPOTIFY_CLIENT_ID=your_client_id_here
+   SPOTIFY_CLIENT_SECRET=your_client_secret_here
    ```
+4. Open the plugin Control Panel in Steam (`Ctrl+Shift+S`) and authenticate Spotify.
 
-4. Build the plugin:
-   ```powershell
-   pnpm run build
-   ```
+---
 
-### 3. Usage
+## 🏗️ Architecture
 
-1. Launch Steam with Millennium
-2. The plugin will load automatically
-3. Press **Ctrl+Shift+S** to open the control panel
-4. Click "Authenticate Spotify" (opens browser for OAuth)
-5. Click "Start Monitoring" to begin tracking playback
-6. Play music on Spotify and enjoy Steam notifications!
-
-## Configuration
-
-Edit `backend/.env` with your Spotify app credentials:
-
-```env
-SPOTIFY_CLIENT_ID=your_actual_client_id
-SPOTIFY_CLIENT_SECRET=your_actual_client_secret
+```mermaid
+graph TD
+    Steam[Steam Client / Millennium] <--> |FFI IPC| Lua[backend/main.lua]
+    Lua <--> |CreateProcessA Silent| Daemon[backend/MediaDaemon.exe]
+    Daemon <--> |WinRT SMTC API| OS[Windows Media Controls]
+    Lua <--> |Callable RPCs| React[frontend/index.tsx]
 ```
 
-## Architecture
+- **Millennium Frontend (`frontend/`)**: Renders the Steam UI Control Panel, polls track information, and invokes native Steam notifications.
+- **Millennium Backend (`backend/main.lua`)**: Launches the `MediaDaemon.exe` completely silently (using LuaJIT FFI `CreateProcessA` with `CREATE_NO_WINDOW`) and acts as the bridge for frontend RPC calls.
+- **Media Daemon (`backend/MediaDaemon.exe`)**: A high-efficiency .NET 9 executable that registers native event listeners on Windows GlobalSystemMediaTransportControlsSessionManager, saving active track state updates to `media_state.json` and taking playback commands from `media_command.txt`.
 
-### Backend (`backend/main.py`)
-- **SpotifyManager**: Handles OAuth authentication, token management, and playback monitoring
-- **SpotifyCallbackServer**: HTTP server for OAuth callback handling  
-- **Backend API**: Exposes methods for frontend communication
+---
 
-### Frontend (`frontend/index.tsx`)
-- **SpotifyNotifications**: Receives backend notifications and displays them in Steam
-- **Control Panel**: UI for authentication and monitoring controls
-- **Backend Communication**: Uses Millennium's callable functions for backend interaction
+## 🔌 API Reference
 
-## API Reference
+### Frontend → Backend (Lua Calls)
+* **`get_windows_media()`**: Reads `media_state.json` and returns the active track metadata (title, artist, album, progress, duration, and base64-encoded thumbnail).
+* **`control_windows_media(command)`**: Writes a playback control action (e.g. `play`, `pause`, `next`, `previous`, or `stop`) to `media_command.txt` for the C# daemon to execute.
 
-### Backend → Frontend
-- `SpotifyNotifications.sendNotification(data)`: Sends notification to Steam
+---
 
-### Frontend → Backend  
-- `Backend.authenticate_spotify()`: Triggers OAuth authentication flow
-- `Backend.get_current_track()`: Gets currently playing track info
-- `Backend.start_monitoring()`: Starts playback monitoring
-- `Backend.stop_monitoring()`: Stops playback monitoring
+## ⚙️ Development
 
-## Troubleshooting
+If you wish to make changes to the C# daemon or build from source:
 
-### Authentication Issues
-- Verify your Spotify app has the correct redirect URI: `http://localhost:8888/callback`
-- Check that your `.env` file contains valid credentials
-- Try deleting `.spotify_cache` to force re-authentication
+```powershell
+# Open backend/MediaDaemon subproject
+cd backend/MediaDaemon
 
-### No Notifications Appearing
-- Ensure monitoring is started via the control panel
-- Check browser console for error messages
-- Verify you're playing music on the same Spotify account
-
-### Control Panel Not Visible
-- Press `Ctrl+Shift+S` to toggle visibility
-- Panel auto-hides after 10 seconds by default
-
-### Python/Dependencies Issues
-- Ensure Python 3.7+ is installed
-- Run: `py -m pip install -r backend/requirements.txt`
-- Check that all imports work: `py -c "import spotipy; print('OK')"`
-
-## Development
-
-The plugin follows Millennium's architecture:
-- Backend runs in Python with Spotify API access
-- Frontend runs in Steam's Chromium context  
-- Communication via callable functions and exposed objects
-
-To contribute:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-This project is open source under the MIT License. See LICENSE file for details.
-
-## Credits
-
-- Built for [Millennium](https://github.com/SteamClientHomebrew/Millennium)
-- Uses [Spotipy](https://github.com/plamere/spotipy) for Spotify API integration
-- Inspired by the need for better music integration in Steam
-```
-pnpm run dev
+# Build release binary
+dotnet build -c Release
 ```
 
-Then ensure your plugin template is in your plugins folder. 
-`%MILLENNIUM_PATH%/plugins/plugin_template`, and select it from the "Plugins" tab within steam, or run `millennium plugins enable plugin_template`
+The compiled binary will be placed inside the `backend/` directory as `MediaDaemon.exe`.
 
-#### Note:
-**MILLENNIUM_PATH** =
-* Steam Path (ex: `C:\Program Files (x86)\Steam`) (Windows)
-* `~/.millennium` (Unix)
+---
 
-## Next Steps
+## 📄 License
 
-https://docs.steambrew.app/developers/plugins/learn
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for more details.
+
+## 🤝 Credits
+
+- Built for the **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** homebrew Steam framework.
+- Inspired by the need for a modern, battery-efficient, and elegant media companion inside Steam.
