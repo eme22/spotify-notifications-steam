@@ -3,6 +3,27 @@ import { STORAGE_KEYS } from "../constants/keys";
 import { console } from "../utils/logger";
 import { SpotifyNotifications } from "./notifications";
 import { updateTrackState } from "./state";
+import { callable } from "@steambrew/client";
+
+const getWindowsMedia = callable<[], string>("get_windows_media");
+const controlWindowsMedia = callable<[string], string>("control_windows_media");
+
+const getMimeTypeFromBase64 = (base64Str: string): string => {
+    if (!base64Str) return "image/jpeg";
+    const firstChars = base64Str.substring(0, 16);
+    if (firstChars.startsWith("iVBORw0KGgo")) {
+        return "image/png";
+    } else if (firstChars.startsWith("/9j/")) {
+        return "image/jpeg";
+    } else if (firstChars.startsWith("R0lGOD")) {
+        return "image/gif";
+    } else if (firstChars.startsWith("UklGR")) {
+        return "image/webp";
+    }
+    return "image/jpeg";
+};
+
+
 
 // Global runtime variables for monitoring
 let lastTrackId: string | null = null;
@@ -106,6 +127,67 @@ export async function startMonitoring() {
     const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "playback";
     const playSound = localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true";
     const minNotificationInterval = parseFloat(localStorage.getItem(STORAGE_KEYS.MIN_INTERVAL) || "2.0");
+
+    if (mode === "winmedia") {
+        isUsingLocalAPI = false;
+        
+        const pollWinMedia = async () => {
+            try {
+                const rawData = await getWindowsMedia();
+                if (!rawData || rawData.trim() === "null") {
+                    updateTrackState(null);
+                    postToChannel({ type: "TRACK_UPDATE", track: null });
+                    return;
+                }
+                
+                const data = JSON.parse(rawData);
+                if (!data || !data.title) {
+                    updateTrackState(null);
+                    postToChannel({ type: "TRACK_UPDATE", track: null });
+                    return;
+                }
+                
+                const isPlaying = data.status === "Playing";
+                
+                const trackInfo = {
+                    name: data.title || "Unknown",
+                    artist: data.artist || "Unknown Artist",
+                    album: data.album || "Unknown Album",
+                    image_url: data.image ? `data:${getMimeTypeFromBase64(data.image)};base64,${data.image}` : "",
+                    id: `${data.artist}:${data.title}`,
+                    duration_ms: data.duration || 0,
+                    progress_ms: data.progress || 0,
+                    is_playing: isPlaying,
+                    is_paused: !isPlaying,
+                    is_stopped: false,
+                    shuffle_state: false,
+                    repeat_state: "off",
+                    timestamp: Date.now()
+                };
+                
+                updateTrackState(trackInfo);
+                postToChannel({ type: "TRACK_UPDATE", track: trackInfo });
+                
+                if (isPlaying) {
+                    const now = Date.now();
+                    if (trackInfo.id !== lastTrackId) {
+                        if (now - lastNotificationTime >= minNotificationInterval * 1000) {
+                            lastTrackId = trackInfo.id;
+                            lastNotificationTime = now;
+                            SpotifyNotifications.sendNotification("Now Playing", trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error polling Windows Media API:", err);
+            }
+        };
+
+        pollWinMedia();
+        monitoringTimer = setInterval(pollWinMedia, 1500);
+        return;
+    }
+
 
     // Local WebSocket logic
     const host = localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1";
@@ -465,6 +547,23 @@ export function stopMonitoring() {
 // Send playback commands to Spotify (local API or official Spotify Web API)
 export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "previous" | "volume" | "seek" | "shuffle" | "repeat", value?: any) {
     console.log(`[Spotify Notifications API] sendPlaybackCommand invoked: command=${command}, value=${value}, isUsingLocalAPI=${isUsingLocalAPI}`);
+    
+    const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "playback";
+    if (mode === "winmedia") {
+        console.log(`[Spotify Notifications API] Windows Media Mode - command=${command}`);
+        if (command === "play" || command === "pause" || command === "next" || command === "previous") {
+            try {
+                const res = await controlWindowsMedia(command);
+                console.log(`[Spotify Notifications API] Windows Media command result: ${res}`);
+            } catch (err) {
+                console.error("[Spotify Notifications API] Failed to send Windows Media command:", err);
+            }
+        } else {
+            console.warn(`[Spotify Notifications API] Command ${command} not supported in Windows Media Mode`);
+        }
+        return;
+    }
+
     if (isUsingLocalAPI) {
         const host = localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1";
         const port = localStorage.getItem(STORAGE_KEYS.PORT) || "8443";

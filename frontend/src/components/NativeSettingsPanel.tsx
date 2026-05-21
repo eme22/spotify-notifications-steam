@@ -18,8 +18,8 @@ export const SpotifySettingsIcon: React.FC = () => (
 );
 
 export const NativeSettingsPanel: React.FC = () => {
-    const [mode, setMode] = useState<"playback" | "webapi">(
-        (localStorage.getItem(STORAGE_KEYS.MODE) as "playback" | "webapi") || "playback"
+    const [mode, setMode] = useState<"playback" | "webapi" | "winmedia">(
+        (localStorage.getItem(STORAGE_KEYS.MODE) as "playback" | "webapi" | "winmedia") || "playback"
     );
     const [host, setHost] = useState(localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1");
     const [port, setPort] = useState(localStorage.getItem(STORAGE_KEYS.PORT) || "8443");
@@ -143,7 +143,8 @@ export const NativeSettingsPanel: React.FC = () => {
 
     const modeOptions = [
         { data: "playback", label: "Local Playback Server (Socket)" },
-        { data: "webapi", label: "Spotify Web API (Remote Auth)" }
+        { data: "webapi", label: "Spotify Web API (Remote Auth)" },
+        { data: "winmedia", label: "Windows Media Playback API (GSMTC)" }
     ];
 
     return (
@@ -159,7 +160,7 @@ export const NativeSettingsPanel: React.FC = () => {
                 />
             </div>
 
-            {mode === "playback" ? (
+            {mode === "playback" && (
                 <>
                     <TextField
                         label="Server Host"
@@ -174,7 +175,9 @@ export const NativeSettingsPanel: React.FC = () => {
                         onChange={(e) => setPort(e.target.value)}
                     />
                 </>
-            ) : (
+            )}
+
+            {mode === "webapi" && (
                 <>
                     <TextField
                         label="Spotify Client ID"
@@ -207,6 +210,13 @@ export const NativeSettingsPanel: React.FC = () => {
                         </ButtonItem>
                     </div>
                 </>
+            )}
+
+            {mode === "winmedia" && (
+                <div style={{ padding: "12px", background: "rgba(0, 0, 0, 0.15)", borderRadius: "6px", fontSize: "12px", color: "#a3a3ac", display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <div style={{ fontWeight: 600, color: "#e1e2e6" }}>Windows Media Playback Mode</div>
+                    <div>No additional setup is required. The plugin will monitor and control media from Windows APIs directly, supporting Spotify and any other media players.</div>
+                </div>
             )}
 
             <ToggleField
