@@ -6,7 +6,7 @@ import { updateTrackState } from "./state";
 import { callable } from "@steambrew/client";
 
 const getWindowsMedia = callable<[], string>("get_windows_media");
-const controlWindowsMedia = callable<[string], string>("control_windows_media");
+const controlWindowsMedia = callable<[{ command: string }], string>("control_windows_media");
 
 const getMimeTypeFromBase64 = (base64Str: string): string => {
     if (!base64Str) return "image/jpeg";
@@ -553,7 +553,7 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
         console.log(`[Spotify Notifications API] Windows Media Mode - command=${command}`);
         if (command === "play" || command === "pause" || command === "next" || command === "previous") {
             try {
-                const res = await controlWindowsMedia(command);
+                const res = await controlWindowsMedia({ command });
                 console.log(`[Spotify Notifications API] Windows Media command result: ${res}`);
             } catch (err) {
                 console.error("[Spotify Notifications API] Failed to send Windows Media command:", err);
