@@ -58,10 +58,14 @@ pnpm run build
 If you prefer to connect directly to the Spotify Web API instead of using the local Windows Media daemon:
 
 ### Option A: Local Playback API Server
-Run the local HTTP server to retrieve Spotify status:
-```powershell
-python setup_playback_server.py
-```
+
+This method connects to a local playback API server running on your machine. You can use either:
+- 🐍 **Python Version**: The [spotify-playback-http (less-compat-version)](https://github.com/CrazyKitty357/spotify-playback-http/tree/less-compat-version) server. You can automatically configure and run it with:
+  ```powershell
+  python setup_playback_server.py
+  ```
+- 🦀 **Rust Version (Highly Recommended Reimplementation)**: The ultra-fast, lightweight [spotify-server](https://github.com/eme22/spotify-server) reimplementation, which runs natively with minimal footprint.
+
 
 ### Option B: Official Spotify Web API (Requires Auth & Premium)
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications) and create an app.
