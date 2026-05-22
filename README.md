@@ -16,7 +16,7 @@ A high-performance Millennium plugin that integrates Spotify and Windows System 
   - **Spotify Playback & Web API Modes**: Legacy modes that support connecting directly to Spotify's APIs (with automatic token refreshing and OAuth).
 - 🎨 **Rich Notifications**: Displays album artwork, artist names, song titles, and playback status directly in Steam's native notification system.
 - 🌐 **Multilingual Support (New!)**: Dynamically localizes all settings panels, tooltips, playback control labels, and notifications in **English, Spanish, and Portuguese** depending on the Steam Client's active language.
-- ⚙️ **Steam Native Control Panel**: Press `Ctrl+Shift+S` to open the settings interface inside Steam to select your preferred media source and adjust notification preferences.
+- ⚙️ **Steam Native Control Panel**: Access the settings interface directly via the Millennium settings inside Steam to select your preferred media source and adjust notification preferences.
 
 ---
 
@@ -49,7 +49,7 @@ pnpm run build
 
 1. Start Steam with Millennium active.
 2. Go to Millennium settings -> **Plugins** and enable **Spotify & Windows Media Notifications**.
-3. Press **Ctrl+Shift+S** in Steam to toggle the control panel.
+3. Click the settings/configuration button next to the plugin in Millennium to open the control panel.
 4. Select **Windows Media** as your source mode to enjoy instant, configuration-free notifications for Spotify and any other media player!
 
 ---
@@ -76,7 +76,7 @@ This method connects to a local playback API server running on your machine. You
    SPOTIFY_CLIENT_ID=your_client_id_here
    SPOTIFY_CLIENT_SECRET=your_client_secret_here
    ```
-4. Open the plugin Control Panel in Steam (`Ctrl+Shift+S`) and authenticate Spotify.
+4. Open the plugin Control Panel via the Millennium settings and authenticate Spotify.
 
 ---
 

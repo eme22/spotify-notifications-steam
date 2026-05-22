@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 1. Launch Steam with the Millennium plugin loaded
 2. The plugin will attempt to authenticate automatically if credentials are cached
-3. If authentication is needed, use the control panel (Ctrl+Shift+S to toggle visibility)
+3. If authentication is needed, open the control panel via the Millennium settings interface
 4. Click "Authenticate Spotify" - this will open your browser for OAuth
 5. Click "Start Monitoring" to begin tracking your Spotify playback
 6. You'll receive Steam notifications when new songs start playing
@@ -80,9 +80,8 @@ pip install -r requirements.txt
 - Check console logs for errors
 - Verify you're playing music on the same Spotify account
 
-### Control Panel Not Visible
-- Press `Ctrl+Shift+S` to toggle the control panel
-- The panel auto-hides after 10 seconds by default
+### Accessing the Control Panel
+- Open the control panel via the Millennium settings interface (Millennium settings -> Plugins -> Spotify & Windows Media Notifications -> Settings/Configuration).
 
 ## Development
 
