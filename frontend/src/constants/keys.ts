@@ -11,5 +11,6 @@ export const STORAGE_KEYS = {
     MIN_INTERVAL: "spotify_notif_min_interval",
     PLAY_SOUND: "spotify_notif_play_sound",
     SYNC_NATIVE: "spotify_notif_sync_native",
-    SYNC_VOLUME: "spotify_notif_sync_volume"
+    SYNC_VOLUME: "spotify_notif_sync_volume",
+    DISABLE_NOTIFICATIONS: "spotify_notif_disable_notifications"
 };

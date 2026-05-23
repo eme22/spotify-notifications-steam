@@ -128,6 +128,7 @@ export async function startMonitoring() {
     const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "playback";
     const playSound = localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true";
     const minNotificationInterval = parseFloat(localStorage.getItem(STORAGE_KEYS.MIN_INTERVAL) || "2.0");
+    const disableNotifications = localStorage.getItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS) === "true";
 
     if (mode === "winmedia") {
         isUsingLocalAPI = false;
@@ -175,7 +176,9 @@ export async function startMonitoring() {
                         if (now - lastNotificationTime >= minNotificationInterval * 1000) {
                             lastTrackId = trackInfo.id;
                             lastNotificationTime = now;
-                            SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                            if (!disableNotifications) {
+                                SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                            }
                         }
                     }
                 }
@@ -233,7 +236,9 @@ export async function startMonitoring() {
                 if (now - lastNotificationTime >= minNotificationInterval * 1000) {
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    if (!disableNotifications) {
+                        SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    }
                 }
             }
         }
@@ -499,7 +504,9 @@ export async function startMonitoring() {
                     console.debug(`Triggering 'Now Playing' notification for track: ${trackInfo.name}`);
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    if (!disableNotifications) {
+                        SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                    }
                 } else {
                     console.warn(`Notification skipped (throttled): timeDiff=${timeDiff}ms is less than required ${requiredDiff}ms.`);
                 }

@@ -28,6 +28,8 @@ export interface Translations {
     syncVolumeDesc: string;
     playSound: string;
     playSoundDesc: string;
+    disableNotifications: string;
+    disableNotificationsDesc: string;
     pollingInterval: string;
     pollingIntervalDesc: string;
     minInterval: string;
@@ -90,6 +92,8 @@ const english: Translations = {
     syncVolumeDesc: "Synchronize Steam's native music volume slider with Spotify player volume",
     playSound: "Play Notification Sound",
     playSoundDesc: "Play a subtle alert tone when displaying notifications",
+    disableNotifications: "Disable Toast Notifications",
+    disableNotificationsDesc: "Stop showing 'Now Playing' Steam toast notifications while keeping the playback monitor and player active",
     pollingInterval: "Web API Polling Interval",
     pollingIntervalDesc: "Interval in seconds to check for new tracks",
     minInterval: "Web API Minimum Notification Interval",
@@ -152,6 +156,8 @@ const spanish: Translations = {
     syncVolumeDesc: "Sincroniza el control deslizante de volumen de música nativo de Steam con el volumen del reproductor de Spotify",
     playSound: "Reproducir sonido de notificación",
     playSoundDesc: "Reproduce un tono de alerta sutil al mostrar notificaciones",
+    disableNotifications: "Desactivar notificaciones",
+    disableNotificationsDesc: "Evita mostrar las notificaciones flotantes de Steam ('Reproduciendo ahora') pero mantiene el reproductor activo",
     pollingInterval: "Intervalo de consulta de Web API",
     pollingIntervalDesc: "Intervalo en segundos para comprobar si hay nuevas canciones",
     minInterval: "Intervalo mínimo de notificación de Web API",
@@ -214,6 +220,8 @@ const portuguese: Translations = {
     syncVolumeDesc: "Sincroniza o controle deslizante de volume de música nativo do Steam com o volume do reprodutor do Spotify",
     playSound: "Reproduzir Som de Notificação",
     playSoundDesc: "Reproduz um tom de alerta sutil ao exibir notificações",
+    disableNotifications: "Desativar notificações",
+    disableNotificationsDesc: "Para de exibir as notificações do Steam mantendo o monitor de reprodução e o reprodutor ativos",
     pollingInterval: "Intervalo de Consulta da Web API",
     pollingIntervalDesc: "Intervalo em segundos para verificar se há novas faixas",
     minInterval: "Intervalo Mínimo de Notificação da Web API",

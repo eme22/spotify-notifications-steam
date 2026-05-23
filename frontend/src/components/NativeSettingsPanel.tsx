@@ -36,6 +36,9 @@ export const NativeSettingsPanel: React.FC = () => {
     const [playSound, setPlaySound] = useState(
         localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true"
     );
+    const [disableNotifications, setDisableNotifications] = useState(
+        localStorage.getItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS) === "true"
+    );
     const [syncNative, setSyncNative] = useState(
         localStorage.getItem(STORAGE_KEYS.SYNC_NATIVE) !== "false"
     );
@@ -52,6 +55,7 @@ export const NativeSettingsPanel: React.FC = () => {
         localStorage.setItem(STORAGE_KEYS.POLLING_INTERVAL, pollingInterval.toString());
         localStorage.setItem(STORAGE_KEYS.MIN_INTERVAL, minInterval.toString());
         localStorage.setItem(STORAGE_KEYS.PLAY_SOUND, playSound.toString());
+        localStorage.setItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS, disableNotifications.toString());
         localStorage.setItem(STORAGE_KEYS.SYNC_NATIVE, syncNative.toString());
         localStorage.setItem(STORAGE_KEYS.SYNC_VOLUME, syncVolume.toString());
 
@@ -233,6 +237,13 @@ export const NativeSettingsPanel: React.FC = () => {
                 checked={syncVolume}
                 disabled={!syncNative}
                 onChange={(val) => setSyncVolume(val)}
+            />
+
+            <ToggleField
+                label={t("disableNotifications")}
+                description={t("disableNotificationsDesc")}
+                checked={disableNotifications}
+                onChange={(val) => setDisableNotifications(val)}
             />
 
             <ToggleField
