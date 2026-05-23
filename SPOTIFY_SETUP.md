@@ -1,95 +1,83 @@
-# Spotify Notifications for Steam
+# Spotify Setup (Legacy Web API Mode)
 
-This plugin integrates Spotify with Steam to show notifications when a new song starts playing.
+If you wish to use the official **Spotify Web API** mode instead of the plug-and-play **Windows Media Mode** (which requires zero setup or authentication), follow the instructions below.
 
-## Setup Instructions
+---
 
-### 1. Spotify App Configuration
+## 📋 Setup Instructions
 
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications)
-2. Create a new app or use an existing one
-3. Set the **Redirect URI** to: `http://localhost:8888/callback`
-4. Note down your **Client ID** and **Client Secret**
+### 1. Create a Spotify Developer Application
 
-### 2. Configure the Plugin
+1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications).
+2. Log in with your Spotify account and click **Create app**.
+3. Fill out the application details:
+   - **App name**: e.g., `Steam Notifications`
+   - **App description**: e.g., `Spotify notifications inside Steam`
+   - **Redirect URI**: **MUST be exactly** `http://localhost:8888/callback`
+4. Agree to the developer terms and click **Save**.
+5. Once created, click on **Settings** in your new app dashboard to view and copy your **Client ID** and **Client Secret**.
 
-1. Copy `backend/.env.template` to `backend/.env`
-2. Edit `backend/.env` and replace the placeholder values with your Spotify credentials:
-   ```
-   SPOTIFY_CLIENT_ID=your_actual_client_id
-   SPOTIFY_CLIENT_SECRET=your_actual_client_secret
-   ```
+---
 
-### 3. Install Dependencies
+### 2. Configure credentials in Steam settings
 
-Navigate to the backend directory and install Python dependencies:
-```bash
-cd backend
-pip install -r requirements.txt
+There is no longer any need for `.env` files or Python dependencies. Everything is configured directly inside Steam's Millennium interface:
+
+1. Launch Steam with Millennium active.
+2. Go to Steam Settings -> **Plugins** and enable **Spotify & Windows Media Notifications**.
+3. Click the configuration/gear icon next to the plugin to open the **Control Panel**.
+4. In the **Connection Mode** dropdown, select **Spotify Web API**.
+5. Enter your **Client ID** and **Client Secret** into the respective text fields.
+
+---
+
+### 3. Authenticate with Spotify
+
+1. Under the Spotify Web API credentials section, click the **Authenticate Spotify** button.
+2. This will open your web browser requesting access to your Spotify playback information. Log in and click **Agree**.
+3. After approving, you will be redirected to a page that won't load (since it points to `http://localhost:8888/callback`). **Do not worry!**
+4. Copy the entire URL of that page from your browser's address bar (it should look like `http://localhost:8888/callback?code=AQ...`).
+5. Return to the Steam plugin Control Panel and paste that URL (or just the `code` parameter value) into the **Auth Code / URL** input field.
+6. Click **Exchange Code**. The plugin will fetch your tokens and link your account.
+7. Click **Save Settings** at the bottom to start monitoring!
+
+---
+
+## ⚡ Features
+
+- **Direct Web API Polling**: Queries Spotify's player API directly for active track, album cover, and status.
+- **Local Storage Caching**: Keeps your Access and Refresh tokens stored safely inside Steam's Chromium context local storage (`localStorage`). No credential files are written to disk.
+- **Automatic Token Refreshing**: Automatically handles token expiration and refreshes the Access Token in the background using your Client Secret.
+- **Adjustable Polling**: Configure how often the plugin queries the Web API to balance responsiveness and API rate-limiting.
+
+---
+
+## 🏗️ Architecture (Spotify Web API)
+
+```
+[ Steam client (Millennium React) ] 
+          │
+          ├─► Saves credentials, Access & Refresh tokens to local storage (localStorage)
+          ├─► Directly fetches playing state from "https://api.spotify.com/v1/me/player"
+          ├─► Displays native Steam notifications using Millennium's toaster
+          └─► Refreshes expired Access Tokens using Spotify's token endpoint
 ```
 
-### 4. Using the Plugin
+---
 
-1. Launch Steam with the Millennium plugin loaded
-2. The plugin will attempt to authenticate automatically if credentials are cached
-3. If authentication is needed, open the control panel via the Millennium settings interface
-4. Click "Authenticate Spotify" - this will open your browser for OAuth
-5. Click "Start Monitoring" to begin tracking your Spotify playback
-6. You'll receive Steam notifications when new songs start playing
+## 🔍 Troubleshooting
 
-## Features
+### "Invalid Client" or Authorization Errors
+- Verify that your **Client ID** and **Client Secret** are entered correctly without trailing spaces.
+- Double-check that your Spotify developer app has `http://localhost:8888/callback` set as a Redirect URI (check spelling carefully).
 
-- **Automatic Authentication**: Caches tokens and refreshes them automatically
-- **Real-time Monitoring**: Tracks your Spotify playback every 5 seconds
-- **Steam Notifications**: Shows native Steam notifications with song info and album art
-- **OAuth Flow**: Secure authentication using Spotify's OAuth 2.0
-- **Error Handling**: Automatically re-authenticates when tokens expire
+### Polling is sluggish
+- You can adjust the **Polling Interval** slider in the Control Panel down to `1.0s` or `1.5s` for faster state updates. Note that very low values might trigger Spotify rate limits if kept active for extended periods.
 
-## Architecture
+### Why use Windows Media Mode instead?
+We highly recommend selecting **Windows Media** mode in the Connection Mode settings instead of Web API. Windows Media mode requires:
+- **No** Spotify developer account.
+- **No** authentication or web browser login.
+- Zero delay/polling rate limits (it listens directly to Windows system events).
+- Extremely low memory consumption (<12MB).
 
-### Backend (`main.py`)
-- `SpotifyManager`: Handles OAuth, token management, and track monitoring
-- `SpotifyCallbackServer`: HTTP server for OAuth callback handling
-- `Backend`: Exposes methods for frontend communication
-
-### Frontend (`index.tsx`)
-- `SpotifyNotifications`: Receives notifications from backend and displays them in Steam
-- Control panel for manual authentication and monitoring control
-- Backend communication using callable functions
-
-## API Methods
-
-### Backend → Frontend
-- `SpotifyNotifications.sendNotification(data)`: Sends notification to Steam
-
-### Frontend → Backend
-- `Backend.authenticate_spotify()`: Trigger authentication flow
-- `Backend.get_current_track()`: Get currently playing track
-- `Backend.start_monitoring()`: Start track monitoring
-- `Backend.stop_monitoring()`: Stop track monitoring
-
-## Troubleshooting
-
-### Authentication Issues
-- Ensure your Spotify app has the correct redirect URI
-- Check that your `.env` file has valid credentials
-- Try deleting the `.spotify_cache` file to force re-authentication
-
-### No Notifications
-- Make sure monitoring is started
-- Check console logs for errors
-- Verify you're playing music on the same Spotify account
-
-### Accessing the Control Panel
-- Open the control panel via the Millennium settings interface (Millennium settings -> Plugins -> Spotify & Windows Media Notifications -> Settings/Configuration).
-
-## Development
-
-The plugin follows the Millennium plugin architecture:
-- Backend runs in Python with access to Spotify API
-- Frontend runs in Steam's Chromium context
-- Communication via callable functions and exposed objects
-
-## License
-
-This project is open source. See LICENSE file for details.

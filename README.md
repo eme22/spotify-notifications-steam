@@ -71,12 +71,10 @@ This method connects to a local playback API server running on your machine. You
 ### Option B: Official Spotify Web API (Requires Auth & Premium)
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications) and create an app.
 2. Set the **Redirect URI** to `http://localhost:8888/callback`.
-3. Copy `backend/.env.template` to `backend/.env` and fill in your client credentials:
-   ```env
-   SPOTIFY_CLIENT_ID=your_client_id_here
-   SPOTIFY_CLIENT_SECRET=your_client_secret_here
-   ```
-4. Open the plugin Control Panel via the Millennium settings and authenticate Spotify.
+3. Open the plugin **Control Panel** via the Millennium settings in Steam.
+4. Select **Spotify Web API** as your connection mode.
+5. Enter your **Client ID** and **Client Secret** directly into the settings fields, click **Authenticate**, and paste the callback URL/code to exchange it.
+6. Click **Save Settings**! (For detailed step-by-step instructions, see [SPOTIFY_SETUP.md](file:///c:/Users/MSB19/Downloads/spotify-notifications-steam/SPOTIFY_SETUP.md)).
 
 ---
 
