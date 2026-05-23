@@ -128,3 +128,13 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for more 
 
 - Built for the **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** homebrew Steam framework.
 - Inspired by the need for a modern, battery-efficient, and elegant media companion inside Steam.
+
+---
+
+## 💖 Support the Project / Apoya el Proyecto
+
+If you love this plugin and want to support its active development, performance improvements, and new features, consider supporting me on Patreon!
+
+[![Patreon](https://img.shields.io/badge/Patreon-Support_me-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/c/eme22)
+
+Your support helps keep this and other Steam/Millennium open-source projects actively maintained and updated!

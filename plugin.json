@@ -7,5 +7,6 @@
     "version": "1.0.0",
     "author": "Community Plugin",
     "backendType": "lua",
-    "tags": ["music", "notifications", "spotify", "integration"]
+    "tags": ["music", "notifications", "spotify", "integration"],
+    "funding": "https://www.patreon.com/c/eme22"
 }
