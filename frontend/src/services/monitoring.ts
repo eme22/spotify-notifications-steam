@@ -6,8 +6,22 @@ import { updateTrackState } from "./state";
 import { callable } from "@steambrew/client";
 import { t } from "../utils/localization";
 
-const getWindowsMedia = callable<[], string>("get_windows_media");
-const controlWindowsMedia = callable<[{ command: string }], string>("control_windows_media");
+const getDaemonPort = callable<[], string>("get_daemon_port");
+
+let cachedDaemonPort: string | null = null;
+
+async function getOrFetchDaemonPort(): Promise<string> {
+    if (cachedDaemonPort && cachedDaemonPort !== "0") {
+        return cachedDaemonPort;
+    }
+    try {
+        cachedDaemonPort = await getDaemonPort();
+    } catch (e) {
+        console.error("Failed to call get_daemon_port RPC:", e);
+        cachedDaemonPort = "0";
+    }
+    return cachedDaemonPort || "0";
+}
 
 const getMimeTypeFromBase64 = (base64Str: string): string => {
     if (!base64Str) return "image/jpeg";
@@ -135,7 +149,21 @@ export async function startMonitoring() {
         
         const pollWinMedia = async () => {
             try {
-                const rawData = await getWindowsMedia();
+                const port = await getOrFetchDaemonPort();
+                if (port === "0") {
+                    updateTrackState(null);
+                    postToChannel({ type: "TRACK_UPDATE", track: null });
+                    return;
+                }
+
+                const response = await fetch(`http://127.0.0.1:${port}/state`);
+                if (!response.ok) {
+                    updateTrackState(null);
+                    postToChannel({ type: "TRACK_UPDATE", track: null });
+                    return;
+                }
+
+                const rawData = await response.text();
                 if (!rawData || rawData.trim() === "null") {
                     updateTrackState(null);
                     postToChannel({ type: "TRACK_UPDATE", track: null });
@@ -184,6 +212,7 @@ export async function startMonitoring() {
                 }
             } catch (err) {
                 console.error("Error polling Windows Media API:", err);
+                cachedDaemonPort = null;
             }
         };
 
@@ -549,6 +578,7 @@ export function stopMonitoring() {
     isUsingLocalAPI = false;
     lastTrackId = null;
     lastNotificationTime = 0;
+    cachedDaemonPort = null;
     console.log("Spotify monitoring halted.");
 }
 
@@ -561,10 +591,16 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
         console.log(`[Spotify Notifications API] Windows Media Mode - command=${command}`);
         if (command === "play" || command === "pause" || command === "next" || command === "previous") {
             try {
-                const res = await controlWindowsMedia({ command });
-                console.log(`[Spotify Notifications API] Windows Media command result: ${res}`);
+                const port = await getOrFetchDaemonPort();
+                if (port !== "0") {
+                    const res = await fetch(`http://127.0.0.1:${port}/command?cmd=${command}`, { method: "POST" });
+                    console.log(`[Spotify Notifications API] Windows Media command result status: ${res.status}`);
+                } else {
+                    console.error("[Spotify Notifications API] Daemon port not initialized!");
+                }
             } catch (err) {
                 console.error("[Spotify Notifications API] Failed to send Windows Media command:", err);
+                cachedDaemonPort = null;
             }
         } else {
             console.warn(`[Spotify Notifications API] Command ${command} not supported in Windows Media Mode`);

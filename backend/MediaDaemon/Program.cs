@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Media.Control;
@@ -10,14 +13,14 @@ namespace MediaDaemon
 {
     class Program
     {
-        private static readonly string _stateFile = Path.Combine(AppContext.BaseDirectory, "media_state.json");
-        private static readonly string _commandFile = Path.Combine(AppContext.BaseDirectory, "media_command.txt");
+        private static string _cachedJsonState = "null";
+        private static HttpListener? _httpListener;
+        private static int _port;
         private static readonly ManualResetEvent _exitEvent = new ManualResetEvent(false);
         private static readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
 
         private static GlobalSystemMediaTransportControlsSessionManager? _manager;
         private static GlobalSystemMediaTransportControlsSession? _currentSession;
-        private static FileSystemWatcher? _watcher;
         private static Timer? _periodicTimer;
 
         // State caching variables to optimize writing and resources
@@ -35,8 +38,13 @@ namespace MediaDaemon
                 // Hook process exit events for cleanup
                 AppDomain.CurrentDomain.ProcessExit += (s, e) => Cleanup();
 
-                // Setup native directory/file watcher for event-driven commands
-                SetupCommandWatcher();
+                // 1. Get free TCP port and write to port.txt for Lua to handshake
+                _port = GetFreeTcpPort();
+                string portFile = Path.Combine(AppContext.BaseDirectory, "port.txt");
+                await File.WriteAllTextAsync(portFile, _port.ToString());
+
+                // 2. Start dynamic local HTTP server
+                StartHttpServer(_port);
 
                 // Initialize SMTC Session Manager and events
                 await InitializeSessionManagerAsync();
@@ -49,7 +57,7 @@ namespace MediaDaemon
             }
             catch (Exception)
             {
-                // Silently write null state on critical failure before exit
+                // Silently clear cached state on critical failure before exit
                 await WriteNullStateAsync();
             }
             finally
@@ -58,64 +66,87 @@ namespace MediaDaemon
             }
         }
 
-        private static void SetupCommandWatcher()
+        private static int GetFreeTcpPort()
         {
-            var dir = Path.GetDirectoryName(_commandFile);
-            if (string.IsNullOrEmpty(dir)) return;
-
-            if (!Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            // Clean up any old command file on startup
-            if (File.Exists(_commandFile))
-            {
-                try { File.Delete(_commandFile); } catch { }
-            }
-
-            _watcher = new FileSystemWatcher(dir, Path.GetFileName(_commandFile))
-            {
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
-                EnableRaisingEvents = true
-            };
-
-            _watcher.Created += OnCommandFileEvent;
-            _watcher.Changed += OnCommandFileEvent;
+            var l = new TcpListener(IPAddress.Loopback, 0);
+            l.Start();
+            int port = ((IPEndPoint)l.LocalEndpoint).Port;
+            l.Stop();
+            return port;
         }
 
-        private static async void OnCommandFileEvent(object sender, FileSystemEventArgs e)
+        private static void StartHttpServer(int port)
         {
-            // Small delay to ensure writer has finished updating the file lock
-            await Task.Delay(30);
-            await HandleCommandFileAsync();
+            _httpListener = new HttpListener();
+            _httpListener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            _httpListener.Start();
+
+            Task.Run(async () =>
+            {
+                while (_httpListener != null && _httpListener.IsListening)
+                {
+                    try
+                    {
+                        var context = await _httpListener.GetContextAsync();
+                        _ = Task.Run(() => HandleRequestAsync(context));
+                    }
+                    catch
+                    {
+                        if (_httpListener == null || !_httpListener.IsListening) break;
+                    }
+                }
+            });
         }
 
-        private static async Task HandleCommandFileAsync()
+        private static async Task HandleRequestAsync(HttpListenerContext context)
         {
-            if (!File.Exists(_commandFile)) return;
+            var req = context.Request;
+            var res = context.Response;
 
-            string cmd = "";
-            int attempts = 5;
-            while (attempts > 0)
+            // Configure CORS to authorize requests from Steam's Chromium process
+            res.Headers.Add("Access-Control-Allow-Origin", "*");
+            res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            res.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+            if (req.HttpMethod == "OPTIONS")
             {
-                try
-                {
-                    cmd = (await File.ReadAllTextAsync(_commandFile)).Trim().ToLower();
-                    try { File.Delete(_commandFile); } catch { }
-                    break;
-                }
-                catch (IOException)
-                {
-                    attempts--;
-                    await Task.Delay(20);
-                }
-                catch
-                {
-                    break;
-                }
+                res.StatusCode = (int)HttpStatusCode.OK;
+                res.Close();
+                return;
             }
 
+            try
+            {
+                if (req.Url?.AbsolutePath == "/state" && req.HttpMethod == "GET")
+                {
+                    byte[] buffer = Encoding.UTF8.GetBytes(_cachedJsonState);
+                    res.ContentType = "application/json";
+                    res.ContentLength64 = buffer.Length;
+                    await res.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                }
+                else if (req.Url?.AbsolutePath == "/command" && req.HttpMethod == "POST")
+                {
+                    string cmd = req.QueryString["cmd"]?.ToLower() ?? "";
+                    await ExecuteCommandAsync(cmd);
+                    res.StatusCode = (int)HttpStatusCode.OK;
+                }
+                else
+                {
+                    res.StatusCode = (int)HttpStatusCode.NotFound;
+                }
+            }
+            catch
+            {
+                res.StatusCode = (int)HttpStatusCode.InternalServerError;
+            }
+            finally
+            {
+                res.Close();
+            }
+        }
+
+        private static async Task ExecuteCommandAsync(string cmd)
+        {
             if (string.IsNullOrEmpty(cmd)) return;
 
             if (cmd == "stop")
@@ -144,7 +175,7 @@ namespace MediaDaemon
                             break;
                     }
 
-                    // Force immediate rewrite of state after command
+                    // Force immediate rewrite of state after command execution
                     await Task.Delay(150);
                     await WriteCurrentStateAsync(_currentSession, forceWrite: true);
                 }
@@ -390,8 +421,7 @@ namespace MediaDaemon
                         image = _cachedThumbnailBase64
                     };
 
-                    var json = JsonSerializer.Serialize(stateObj);
-                    await File.WriteAllTextAsync(_stateFile, json);
+                    _cachedJsonState = JsonSerializer.Serialize(stateObj);
 
                     _lastTrackId = currentTrackId;
                     _lastStatus = currentStatus;
@@ -430,29 +460,23 @@ namespace MediaDaemon
         {
             if (_lastTrackId != "null")
             {
-                try
-                {
-                    await File.WriteAllTextAsync(_stateFile, "null");
-                    _lastTrackId = "null";
-                    _lastStatus = "";
-                    _lastWriteTime = DateTime.UtcNow;
-                }
-                catch
-                {
-                    // Suppress file writes issues
-                }
+                _cachedJsonState = "null";
+                _lastTrackId = "null";
+                _lastStatus = "";
+                _lastWriteTime = DateTime.UtcNow;
             }
+            await Task.CompletedTask;
         }
 
         private static void Cleanup()
         {
             try
             {
-                if (_watcher != null)
+                if (_httpListener != null)
                 {
-                    _watcher.EnableRaisingEvents = false;
-                    _watcher.Dispose();
-                    _watcher = null;
+                    try { _httpListener.Stop(); } catch { }
+                    try { _httpListener.Close(); } catch { }
+                    _httpListener = null;
                 }
 
                 if (_periodicTimer != null)
@@ -483,10 +507,11 @@ namespace MediaDaemon
                     _manager = null;
                 }
 
-                // Write final null state synchronously on exit to be absolutely reliable
-                if (File.Exists(_stateFile))
+                // Delete handshake port file if left over on abnormal shutdown
+                string portFile = Path.Combine(AppContext.BaseDirectory, "port.txt");
+                if (File.Exists(portFile))
                 {
-                    try { File.WriteAllText(_stateFile, "null"); } catch { }
+                    try { File.Delete(portFile); } catch { }
                 }
             }
             catch { }

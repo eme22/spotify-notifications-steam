@@ -1,7 +1,7 @@
 local logger = require("logger")
 local millennium = require("millennium")
 
--- Safely initialize LuaJIT FFI for 100% silent windowless process spawning
+-- Safely initialize LuaJIT FFI for 100% silent windowless process spawning and Sleep API
 local success_ffi, ffi = pcall(require, "ffi")
 if success_ffi then
     pcall(function()
@@ -49,6 +49,7 @@ if success_ffi then
             );
 
             int CloseHandle(HANDLE hObject);
+            void Sleep(unsigned long dwMilliseconds);
         ]]
     end)
 end
@@ -95,70 +96,11 @@ local function run_silently(cmd)
     return false
 end
 
-function get_windows_media()
-    local script_path = debug.getinfo(1, "S").source:sub(2)
-    local backend_dir = script_path:match("(.*[/\\])") or ""
-    local state_file = backend_dir .. "media_state.json"
-    
-    local file = io.open(state_file, "r")
-    if not file then
-        return "null"
-    end
-    local content = file:read("*a")
-    file:close()
-    return content
-end
+-- Global variable to cache the MediaDaemon web server port
+local daemon_port = nil
 
-function control_windows_media(...)
-    local args = {...}
-    logger:info("control_windows_media called with " .. tostring(#args) .. " arguments")
-    for i, v in ipairs(args) do
-        logger:info("Arg " .. tostring(i) .. ": type=" .. type(v) .. " value=" .. tostring(v))
-    end
-    
-    local command = nil
-    if #args > 0 then
-        if type(args[1]) == "table" then
-            logger:info("Arg 1 is a table:")
-            for k, val in pairs(args[1]) do
-                logger:info("  Key: " .. tostring(k) .. " Value: " .. tostring(val))
-            end
-            command = args[1][1] or args[1]["command"] or args[1]["0"]
-        elseif type(args[1]) == "string" then
-            command = args[1]
-        end
-        
-        if not command and #args > 1 then
-            if type(args[2]) == "string" then
-                command = args[2]
-            elseif type(args[2]) == "table" then
-                logger:info("Arg 2 is a table:")
-                for k, val in pairs(args[2]) do
-                    logger:info("  Key: " .. tostring(k) .. " Value: " .. tostring(val))
-                end
-                command = args[2][1] or args[2]["command"] or args[2]["0"]
-            end
-        end
-    end
-    
-    if not command then
-        logger:error("No command string found in arguments!")
-        return "error"
-    end
-    
-    logger:info("Resolved command to send: " .. tostring(command))
-    
-    local script_path = debug.getinfo(1, "S").source:sub(2)
-    local backend_dir = script_path:match("(.*[/\\])") or ""
-    local command_file = backend_dir .. "media_command.txt"
-    
-    local file = io.open(command_file, "w")
-    if not file then
-        return "error"
-    end
-    file:write(command)
-    file:close()
-    return "success"
+function get_daemon_port()
+    return tostring(daemon_port or "0")
 end
 
 local function on_load()
@@ -167,6 +109,10 @@ local function on_load()
     local script_path = debug.getinfo(1, "S").source:sub(2)
     local backend_dir = script_path:match("(.*[/\\])") or ""
     local daemon_exe = backend_dir .. "MediaDaemon.exe"
+    local port_file = backend_dir .. "port.txt"
+    
+    -- Ensure any leftover port.txt is cleaned up
+    os.remove(port_file)
     
     -- Silently launch the background media daemon using FFI (100% windowless)
     local cmd = '"' .. daemon_exe .. '"'
@@ -181,17 +127,46 @@ local function on_load()
         logger:info("Media daemon launched successfully via FFI.")
     end
     
+    -- Poll for the port.txt handshake file (up to 20 attempts, 2 seconds max)
+    local port = nil
+    for i = 1, 20 do
+        local f = io.open(port_file, "r")
+        if f then
+            port = f:read("*a"):gsub("%s+", "")
+            f:close()
+            os.remove(port_file) -- Delete immediately after discovery
+            break
+        end
+        
+        if success_ffi then
+            pcall(function() ffi.C.Sleep(100) end)
+        else
+            -- Basic fallback busy sleep if FFI is completely disabled
+            local t = os.clock()
+            while os.clock() - t < 0.1 do end
+        end
+    end
+    
+    if port and tonumber(port) then
+        daemon_port = tonumber(port)
+        logger:info("Media daemon API discovered and listening on localhost port: " .. tostring(daemon_port))
+    else
+        logger:error("Media daemon port.txt handshake timed out or failed!")
+    end
+    
     millennium.ready()
 end
 
 -- Called when your plugin is unloaded (plugin disabled or Steam shutting down).
--- NOTE: If Steam crashes or is force-closed, this may not be called.
 local function on_unload()
     logger:info("Spotify Notifications Backend unloading...")
     
-    -- Gracefully stop the C# daemon by sending the "stop" command
-    control_windows_media("stop")
-    logger:info("Sent stop command to media daemon.")
+    -- Gracefully stop the C# daemon by invoking its HTTP API command endpoint
+    if daemon_port then
+        logger:info("Sending stop command to MediaDaemon API on port " .. tostring(daemon_port))
+        local stop_cmd = 'curl -X POST "http://127.0.0.1:' .. tostring(daemon_port) .. '/command?cmd=stop"'
+        run_silently(stop_cmd)
+    end
     
     logger:info("Spotify Notifications Backend unloaded")
 end
