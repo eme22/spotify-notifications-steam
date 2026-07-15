@@ -21,21 +21,20 @@ export default async function PluginMain() {
     const language = await (window as any).SteamClient?.Settings?.GetCurrentLanguage?.() || "english";
     initializeLocalization(language);
 
-    console.debug(`[Spotify Notifications] Frontend loaded in window: "${document.title}" with language: "${language}"`);
-    
+    console.debug(`Frontend loaded in window: "${document.title}" with language: "${language}"`);
     const isBackground = document.title === "SharedJSContext";
 
     if (isBackground) {
         // SharedJSContext: Runs ONLY the background socket connection & monitoring loop
-        
+
         // Listen for playback commands and initial state requests from overlay
         listenToChannel((e) => {
-            console.log(`[Spotify Notifications Backend] Received BroadcastChannel message:`, e.data);
+            console.debug(`Received BroadcastChannel message:`, e.data);
             if (e.data.type === "PLAYBACK_COMMAND") {
-                console.log(`[Spotify Notifications Backend] Processing PLAYBACK_COMMAND: ${e.data.command} with value:`, e.data.value);
+                console.debug(`Processing PLAYBACK_COMMAND: ${e.data.command} with value:`, e.data.value);
                 sendPlaybackCommand(e.data.command, e.data.value);
             } else if (e.data.type === "REQUEST_INITIAL_STATE") {
-                console.log(`[Spotify Notifications Backend] Sending initial track state to new window`);
+                console.debug(`Sending initial track state to new window`);
                 if (currentTrackState) {
                     postToChannel({ type: "TRACK_UPDATE", track: currentTrackState });
                 }
@@ -53,7 +52,7 @@ export default async function PluginMain() {
         startOverlayPolling();
     } else {
         // UI Windows (Steam Client UI, etc.)
-        
+
         // Intercept native playback control functions & changes
         hookNativeControls();
         hookNativeObservers();

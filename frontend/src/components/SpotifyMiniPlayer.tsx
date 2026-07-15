@@ -82,7 +82,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
             baselineTrackIdRef.current = currentTrackId;
             baselineIsPlayingRef.current = currentIsPlaying;
             baselineTimeRef.current = currentTime;
-            
+
             if (!currentIsPlaying) {
                 // Paused: Freeze baseline progress at the exact current smooth localProgress position
                 baselineProgressRef.current = localProgressRef.current;
@@ -116,7 +116,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
     // High-frequency real-time estimated progress renderer
     useEffect(() => {
         if (!track || !track.is_playing) {
-            return () => {};
+            return () => { };
         }
 
         const interval = setInterval(() => {
@@ -135,7 +135,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
     // Handle playback commands
     const handleCommand = (command: "play" | "pause" | "next" | "previous" | "shuffle" | "repeat") => {
         console.log(`[Spotify Notifications MiniPlayer] Button clicked: ${command}`);
-        
+
         let value: any = undefined;
         if (command === "shuffle") {
             value = !track.shuffle_state;
@@ -185,8 +185,8 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
         const target = e.target as HTMLElement;
         if (
-            target.closest("button") || 
-            target.closest(".window-controls") || 
+            target.closest("button") ||
+            target.closest(".window-controls") ||
             target.closest(".player-progress-container") ||
             target.closest(".player-artist") ||
             target.closest(".player-title")
@@ -206,7 +206,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
     };
 
     useEffect(() => {
-        if (!isDragging) return () => {};
+        if (!isDragging) return () => { };
 
         const handleMouseMove = (e: MouseEvent) => {
             if (!dragStartRef.current) return;
@@ -261,7 +261,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
     }, [isDragging, position]);
 
     return (
-        <div 
+        <div
             ref={playerRef}
             onMouseDown={handleMouseDown}
             style={{
@@ -273,10 +273,10 @@ export const SpotifyMiniPlayer: React.FC = () => {
                 transition: isDragging ? "none" : "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
                 ...(isCollapsed
                     ? { bottom: "35px", right: "25px", left: "auto", top: "auto" }
-                    : (position 
-                        ? { left: `${position.x}px`, top: `${position.y}px`, bottom: "auto", right: "auto" } 
+                    : (position
+                        ? { left: `${position.x}px`, top: `${position.y}px`, bottom: "auto", right: "auto" }
                         : { bottom: "35px", right: "25px", left: "auto", top: "auto" }
-                      )
+                    )
                 )
             }}
         >
@@ -545,20 +545,20 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
                     {/* Controls Row */}
                     <div className="player-controls">
-                        <button 
-                            type="button" 
-                            className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`} 
-                            onClick={() => handleCommand("shuffle")} 
+                        <button
+                            type="button"
+                            className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`}
+                            onClick={() => handleCommand("shuffle")}
                             title={isShuffleActive ? t("shuffleOn") : t("shuffleOff")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                 <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
                             </svg>
                         </button>
-                        <button 
-                            type="button" 
-                            className="DialogButton Secondary Focusable control-btn" 
-                            onClick={() => handleCommand("previous")} 
+                        <button
+                            type="button"
+                            className="DialogButton Secondary Focusable control-btn"
+                            onClick={() => handleCommand("previous")}
                             title={t("prevTrack")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
@@ -566,10 +566,10 @@ export const SpotifyMiniPlayer: React.FC = () => {
                             </svg>
                         </button>
                         {track.is_playing ? (
-                            <button 
-                                type="button" 
-                                className="DialogButton Secondary Focusable control-btn control-btn-play" 
-                                onClick={() => handleCommand("pause")} 
+                            <button
+                                type="button"
+                                className="DialogButton Secondary Focusable control-btn control-btn-play"
+                                onClick={() => handleCommand("pause")}
                                 title={t("pause")}
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
@@ -577,10 +577,10 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 </svg>
                             </button>
                         ) : (
-                            <button 
-                                type="button" 
-                                className="DialogButton Secondary Focusable control-btn control-btn-play" 
-                                onClick={() => handleCommand("play")} 
+                            <button
+                                type="button"
+                                className="DialogButton Secondary Focusable control-btn control-btn-play"
+                                onClick={() => handleCommand("play")}
                                 title={t("play")}
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
@@ -588,20 +588,20 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 </svg>
                             </button>
                         )}
-                        <button 
-                            type="button" 
-                            className="DialogButton Secondary Focusable control-btn" 
-                            onClick={() => handleCommand("next")} 
+                        <button
+                            type="button"
+                            className="DialogButton Secondary Focusable control-btn"
+                            onClick={() => handleCommand("next")}
                             title={t("nextTrack")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
                                 <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
                             </svg>
                         </button>
-                        <button 
-                            type="button" 
-                            className={`DialogButton Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`} 
-                            onClick={() => handleCommand("repeat")} 
+                        <button
+                            type="button"
+                            className={`DialogButton Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`}
+                            onClick={() => handleCommand("repeat")}
                             title={repeatTitle}
                         >
                             {track.repeat_state === "track" ? (
@@ -634,9 +634,9 @@ export function injectMiniPlayerIntoOverlay(overlayWindow: Window) {
     try {
         const root = ReactDOM.createRoot(container);
         root.render(<SpotifyMiniPlayer />);
-        console.debug("[Spotify Notifications] Mini-player successfully injected into Game Overlay!");
+        console.debug("Mini-player successfully injected into Game Overlay!");
     } catch (e) {
-        console.error("[Spotify Notifications] Failed to render mini-player inside overlay window:", e);
+        console.error("Failed to render mini-player inside overlay window:", e);
     }
 }
 
@@ -657,15 +657,15 @@ export function startOverlayPolling() {
             let title = "";
             let url = "";
             let isOverlay = false;
-            
+
             if (overlayWindow && overlayWindow.document) {
                 url = overlayWindow.location.href || "";
                 title = overlayWindow.document.title || "";
-                
+
                 const lowerName = name.toLowerCase();
-                
-                isOverlay = lowerName.startsWith("desktopoverlay") || 
-                            lowerName.startsWith("gameoverlay");
+
+                isOverlay = lowerName.startsWith("desktopoverlay") ||
+                    lowerName.startsWith("gameoverlay");
 
                 if (isOverlay) {
                     const overlayDoc = overlayWindow.document;
@@ -691,7 +691,7 @@ export function startOverlayPolling() {
         const currentKey = popupsList.map(p => `${p.name}:${p.isOverlay}`).join("|");
         if (currentKey !== lastPopupsKey) {
             lastPopupsKey = currentKey;
-            console.log(`[Spotify Notifications] Active windows in Steam PopupManager:`, popupsList);
+            console.log(`Active windows in Steam PopupManager:`, popupsList);
         }
     };
 
