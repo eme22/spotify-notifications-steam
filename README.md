@@ -1,138 +1,163 @@
 # Spotify & Windows Media Notifications for Steam
 
-A high-performance Millennium plugin that integrates Spotify and Windows System Media Transport Controls (SMTC) with Steam, showing gorgeous notifications whenever a new song starts playing.
-
-> [!TIP]
-> **New in Version 2.0**: The plugin now features a native C# background daemon that listens directly to Windows media events with zero lag, zero annoying popup console windows, <12MB RAM consumption, and absolutely **no Spotify developer account or authentication required!**
+Millennium plugin that shows Steam notifications when a song plays from Spotify (or any Windows media app). Includes a floating mini-player overlay and native Steam settings panel.
 
 ---
 
-## 🎵 Features
+## Installation
 
-- 🖥️ **Universal Windows Media Support (New!)**: Natively integrates with Windows 10/11 System Media Transport Controls (SMTC). Works instantly with Spotify (Desktop/Web), YouTube, VLC, and any media player that integrates with Windows.
-- ⚡ **Lightweight & Silent**: The event-driven C# background daemon uses WinRT events, consuming `< 12MB RAM` and `0% CPU` at rest. Starts **100% windowlessly and silently** via LuaJIT FFI `CreateProcessA` (no annoying command prompt flash).
-- 🔌 **Dual Mode Support**:
-  - **Windows Media Mode (Recommended)**: Plug-and-play. Grabs active media details directly from Windows with base64 album artwork.
-  - **Spotify Playback & Web API Modes**: Legacy modes that support connecting directly to Spotify's APIs (with automatic token refreshing and OAuth).
-- 🎨 **Rich Notifications**: Displays album artwork, artist names, song titles, and playback status directly in Steam's native notification system.
-- 🌐 **Multilingual Support (New!)**: Dynamically localizes all settings panels, tooltips, playback control labels, and notifications in **English, Spanish, and Portuguese** depending on the Steam Client's active language.
-- ⚙️ **Steam Native Control Panel**: Access the settings interface directly via the Millennium settings inside Steam to select your preferred media source and adjust notification preferences.
+### Option A: Download Release
 
----
+1. Download the latest `.zip` from [Releases](https://github.com/yourusername/spotify-notifications-steam/releases).
+2. Extract into `C:\Program Files (x86)\Steam\millennium\plugins\spotify-notifications-steam\`
+3. Restart Steam, go to Millennium settings → Plugins → enable **Spotify Notifications**.
+4. Open plugin settings and select **Windows Media** as source mode.
 
-## 📋 Prerequisites
-
-- **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** - Steam client modification framework.
-- **Windows 10 or 11**
-- **.NET 9 Runtime** (Required to run the high-performance media daemon).
-- *(Optional - Legacy)* Python 3.7+ (Only if you intend to run the legacy Spotify Playback API local server).
-
----
-
-## 🚀 Installation & Setup
-
-### 1. Install the Plugin
-
-Clone this repository directly into your Millennium plugins directory:
+### Option B: Clone & Deploy (Development)
 
 ```powershell
-# Navigate to your Millennium plugins folder (e.g., C:\Program Files (x86)\Steam\plugins)
+cd "C:\Program Files (x86)\Steam\millennium\plugins"
 git clone https://github.com/yourusername/spotify-notifications-steam.git
-
-# Install dependencies and build the plugin frontend
 cd spotify-notifications-steam
-pnpm install
-pnpm run build
+npm install
+
+# Dev mode — debug logging to backend/media-daemon.log
+.\deploy-dev.ps1
+
+# Prod mode — release binary, no log file
+.\deploy-prod.ps1
 ```
 
-### 2. Enable in Steam
-
-1. Start Steam with Millennium active.
-2. Go to Millennium settings -> **Plugins** and enable **Spotify & Windows Media Notifications**.
-3. Click the settings/configuration button next to the plugin in Millennium to open the control panel.
-4. Select **Windows Media** as your source mode to enjoy instant, configuration-free notifications for Spotify and any other media player!
+Both scripts build the Rust daemon, build the frontend, and copy only the necessary files to the Steam plugins directory (no source code).
 
 ---
 
-## 🛠️ Legacy Spotify API Configuration (Optional)
+## Prerequisites
 
-If you prefer to connect directly to the Spotify Web API instead of using the local Windows Media daemon:
-
-### Option A: Local Playback API Server
-
-This method connects to a local playback API server running on your machine. You can use either:
-- 🐍 **Python Version**: The [spotify-playback-http (less-compat-version)](https://github.com/CrazyKitty357/spotify-playback-http/tree/less-compat-version) server. You can automatically configure and run it with:
-  ```powershell
-  python setup_playback_server.py
-  ```
-- 🦀 **Rust Version (Highly Recommended Reimplementation)**: The ultra-fast, lightweight [spotify-server](https://github.com/eme22/spotify-server) reimplementation, which runs natively with minimal footprint.
-
-
-### Option B: Official Spotify Web API (Requires Auth & Premium)
-1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/applications) and create an app.
-2. Set the **Redirect URI** to `http://localhost:8888/callback`.
-3. Open the plugin **Control Panel** via the Millennium settings in Steam.
-4. Select **Spotify Web API** as your connection mode.
-5. Enter your **Client ID** and **Client Secret** directly into the settings fields, click **Authenticate**, and paste the callback URL/code to exchange it.
-6. Click **Save Settings**! (For detailed step-by-step instructions, see [SPOTIFY_SETUP.md](file:///c:/Users/MSB19/Downloads/spotify-notifications-steam/SPOTIFY_SETUP.md)).
+- **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** (Steam client mod)
+- **Windows 10 or 11**
+- *(Dev only)* [Rust toolchain](https://rustup.rs/) + Node.js 20+
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
-```mermaid
-graph TD
-    Steam[Steam Client / Millennium] <--> |FFI IPC| Lua[backend/main.lua]
-    Lua <--> |CreateProcessA Silent| Daemon[backend/MediaDaemon.exe]
-    Daemon <--> |WinRT SMTC API| OS[Windows Media Controls]
-    Lua <--> |Callable RPCs| React[frontend/index.tsx]
+```
+┌─ Steam CEF Context ─────────────────────────────────┐
+│                                                      │
+│  ┌─ SharedJSContext (background) ─┐  ┌─ UI Windows ─┐│
+│  │  monitoring.ts (poll loop)     │  │ SettingsPanel ││
+│  │  startOverlayPolling()         │  │ MiniPlayer    ││
+│  │  ─────────BroadcastChannel─────│──│ hookNative*() ││
+│  └────────────────────────────────┘  └──────────────┘│
+│         │ HTTP fetch(/state, /command)                │
+└─────────│────────────────────────────────────────────┘
+          │
+  backend/mediadaemon.exe (Rust)
+  - tokio + axum HTTP server on random port
+  - Windows SMTC event listener
+  - port.txt handshake → Lua discovers port
+  - /state, /command, /logs
+          │
+  backend/main.lua (LuaJIT)
+  - Launches daemon silently via FFI CreateProcessA
+  - Exposes get_daemon_port() and get_daemon_logs() as RPC
+  - Polls port.txt up to 20×100ms for handshake
 ```
 
-- **Millennium Frontend (`frontend/`)**: Renders the Steam UI Control Panel, polls track information, and invokes native Steam notifications.
-- **Millennium Backend (`backend/main.lua`)**: Launches the `MediaDaemon.exe` completely silently (using LuaJIT FFI `CreateProcessA` with `CREATE_NO_WINDOW`) and acts as the bridge for frontend RPC calls.
-- **Media Daemon (`backend/MediaDaemon.exe`)**: A high-efficiency .NET 9 executable that registers native event listeners on Windows GlobalSystemMediaTransportControlsSessionManager, saving active track state updates to `media_state.json` and taking playback commands from `media_command.txt`.
+### Communication flow
+
+| Between | Method | Details |
+|---|---|---|
+| Lua → Daemon | `port.txt` handshake | Daemon writes its port, Lua reads + deletes it |
+| Frontend → Lua | Millennium `callable()` RPC | `get_daemon_port()`, `get_daemon_logs()` |
+| Frontend → Daemon | HTTP fetch (localhost) | Polls `/state`, sends `/command`, reads `/logs` |
+| Frontend ↔ Frontend | `BroadcastChannel("spotify_notifications_steam")` | `TRACK_UPDATE`, `PLAYBACK_COMMAND`, `REQUEST_INITIAL_STATE` |
 
 ---
 
-## 🔌 API Reference
+## Project Structure
 
-### Frontend → Backend (Lua Calls)
-* **`get_windows_media()`**: Reads `media_state.json` and returns the active track metadata (title, artist, album, progress, duration, and base64-encoded thumbnail).
-* **`control_windows_media(command)`**: Writes a playback control action (e.g. `play`, `pause`, `next`, `previous`, or `stop`) to `media_command.txt` for the C# daemon to execute.
-
----
-
-## ⚙️ Development
-
-If you wish to make changes to the C# daemon or build from source:
-
-```powershell
-# Open backend/MediaDaemon subproject
-cd backend/MediaDaemon
-
-# Build release binary
-dotnet build -c Release
+```
+spotify-notifications-steam/
+├── plugin.json                  # Millennium plugin metadata
+├── .millennium/Dist/index.js   # Compiled frontend (React)
+├── backend/
+│   ├── main.lua                # LuaJIT backend (entry point)
+│   ├── mediadaemon.exe         # Rust daemon binary
+│   ├── .daemon-dev             # Dev mode marker (created by deploy-dev)
+│   ├── mediadaemon-rust/       # Rust source (src/main.rs, http.rs, logs.rs, state.rs, media/)
+│   └── media-daemon.log        # Debug log (dev mode only)
+├── frontend/
+│   ├── index.tsx               # React entry — splits on SharedJSContext vs UI
+│   └── src/
+│       ├── components/
+│       │   ├── NativeSettingsPanel.tsx    # Steam settings UI
+│       │   └── SpotifyMiniPlayer.tsx      # Floating overlay mini-player
+│       ├── services/
+│       │   ├── monitoring.ts   # Poll loop + 3 modes (winmedia/playback/webapi)
+│       │   ├── notifications.tsx          # Steam toast notifications
+│       │   └── state.ts        # Reactive track state
+│       └── utils/
+│           ├── localization.ts # EN / ES / PT translations
+│           └── logger.ts       # Prefixed console wrapper
+├── deploy-dev.ps1              # Build + deploy dev (debug + log file)
+└── deploy-prod.ps1             # Build + deploy prod (release, no log)
 ```
 
-The compiled binary will be placed inside the `backend/` directory as `MediaDaemon.exe`.
+---
+
+## How It Works
+
+1. **Lua** launches `mediadaemon.exe` silently via LuaJIT FFI `CreateProcessA` with `CREATE_NO_WINDOW`.
+2. **Daemon** binds a random port, writes it to `port.txt`, starts the HTTP server, and listens for Windows SMTC events.
+3. **Lua** discovers the port (polls `port.txt` up to 2s), then exposes it to the frontend via `get_daemon_port()` RPC.
+4. **Frontend** (background `SharedJSContext`) periodically fetches `http://127.0.0.1:{port}/state` and broadcasts track updates to other Steam windows via `BroadcastChannel`.
+5. **MiniPlayer** receives `TRACK_UPDATE` via broadcast and renders the draggable overlay in game windows.
+6. Play/Pause/Next/Previous commands go from the UI → broadcast → background → daemon `/command` endpoint.
 
 ---
 
-## 📄 License
+## Daemon HTTP API
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for more details.
-
-## 🤝 Credits
-
-- Built for the **[Millennium](https://github.com/SteamClientHomebrew/Millennium)** homebrew Steam framework.
-- Inspired by the need for a modern, battery-efficient, and elegant media companion inside Steam.
+| Endpoint | Method | Description |
+|---|---|---|
+| `/state` | GET | Current track JSON (title, artist, album, duration, progress, status, image) |
+| `/command?cmd={play\|pause\|next\|previous\|stop}` | POST | Execute playback command; `stop` exits the daemon |
+| `/logs` | GET | Drained buffered info+ log entries (plain text, one per line) |
 
 ---
 
-## 💖 Support the Project / Apoya el Proyecto
+## Dev / Prod Differences
 
-If you love this plugin and want to support its active development, performance improvements, and new features, consider supporting me on Patreon!
+| | Dev | Prod |
+|---|---|---|
+| Daemon build | `cargo build` (debug) | `cargo build --release` |
+| Log file | `backend/media-daemon.log` (debug level) | None |
+| `.daemon-dev` marker | Created (passes `--dev` flag) | Removed |
+| Frontend | `npm run dev` | `npm run build` |
+| Lua log forwarding | Info+ from `/logs` → `logger` | Same |
+
+---
+
+## Connection Modes
+
+- **Windows Media (winmedia)**: Default, plug-and-play via SMTC daemon. No accounts needed.
+- **Playback API (playback)**: Socket.IO connection to a local server. See [spotify-server](https://github.com/eme22/spotify-server).
+- **Spotify Web API (webapi)**: OAuth-based Spotify API. See [SPOTIFY_SETUP.md](SPOTIFY_SETUP.md).
+
+Switched in the plugin settings panel inside Steam.
+
+---
+
+## License
+
+MIT
+
+## Credits
+
+Built for [Millennium](https://github.com/SteamClientHomebrew/Millennium).
+
+## Support
 
 [![Patreon](https://img.shields.io/badge/Patreon-Support_me-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/c/eme22)
-
-Your support helps keep this and other Steam/Millennium open-source projects actively maintained and updated!
