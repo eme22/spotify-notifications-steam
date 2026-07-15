@@ -8,7 +8,7 @@ Millennium plugin that shows Steam notifications when a song plays from Spotify 
 
 ### Option A: Download Release
 
-1. Download the latest `.zip` from [Releases](https://github.com/yourusername/spotify-notifications-steam/releases).
+1. Download the latest `.zip` from [Releases](https://github.com/eme22/spotify-notifications-steam/releases).
 2. Extract into `C:\Program Files (x86)\Steam\millennium\plugins\spotify-notifications-steam\`
 3. Restart Steam, go to Millennium settings → Plugins → enable **Spotify Notifications**.
 4. Open plugin settings and select **Windows Media** as source mode.
@@ -17,7 +17,7 @@ Millennium plugin that shows Steam notifications when a song plays from Spotify 
 
 ```powershell
 cd "C:\Program Files (x86)\Steam\millennium\plugins"
-git clone https://github.com/yourusername/spotify-notifications-steam.git
+git clone https://github.com/eme22/spotify-notifications-steam.git
 cd spotify-notifications-steam
 npm install
 
