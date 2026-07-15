@@ -1,8 +1,7 @@
 {
   "scripts": {
     "dev": "millennium-ttc --build dev",
-    "build": "millennium-ttc --build prod",
-    "build:daemon": "powershell -ExecutionPolicy Bypass -File backend/build_rust_daemon.ps1"
+    "build": "millennium-ttc --build prod"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.27.2",
