@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build daemon (release)
+        working-directory: backend/mediadaemon-rust
+        run: cargo build --release
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $outDir = "spotify-notifications-$tag"
+          New-Item -ItemType Directory -Path $outDir -Force
+
+          Copy-Item "plugin.json" "$outDir/"
+          Copy-Item "backend\mediadaemon.exe" "$outDir/"
+          Copy-Item "backend\main.lua" "$outDir/"
+          New-Item -ItemType Directory -Path "$outDir\.millennium\Dist" -Force
+          Copy-Item ".millennium\Dist\index.js" "$outDir\.millennium\Dist/"
+
+          Compress-Archive -Path "$outDir\*" -DestinationPath "$outDir.zip"
+          echo "RELEASE_ZIP=$outDir.zip" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.RELEASE_ZIP }}
+          generate_release_notes: true
