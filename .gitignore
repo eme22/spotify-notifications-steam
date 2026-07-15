@@ -8,9 +8,11 @@ yarn.lock
 backend/__pycache__/
 backend/.env
 
-# C# Daemon build directories
-backend/MediaDaemon/bin/
-backend/MediaDaemon/obj/
+# Rust daemon build artifacts
+backend/mediadaemon-rust/target/
+backend/mediadaemon.exe
+backend/mediadaemon.pdb
+backend/media-daemon.log
 
 # Runtime state/command files
 backend/media_state.json
