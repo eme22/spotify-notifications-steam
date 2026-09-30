@@ -13,13 +13,14 @@ export interface Translations {
     serverPortDesc: string;
     clientId: string;
     clientIdDesc: string;
-    clientSecret: string;
-    clientSecretDesc: string;
     authInstruction: string;
+    authLinkedStatus: string;
+    authLegacyMigrationWarning: string;
     authBtn1: string;
     authCodeUrl: string;
     authCodeUrlDesc: string;
     authBtn2: string;
+    authBtnDisconnect: string;
     winMediaHeader: string;
     winMediaDesc: string;
     syncNative: string;
@@ -44,6 +45,7 @@ export interface Translations {
     toastAuthOpening: string;
     toastErrorCredentialsRequired: string;
     toastAuthLinked: string;
+    toastAuthDisconnected: string;
     toastAuthErrorTitle: string;
     toastAuthExchangeFailed: string;
     testNotifBody: string;
@@ -77,13 +79,14 @@ const english: Translations = {
     serverPortDesc: "Port of the local Spotify Playback server",
     clientId: "Spotify Client ID",
     clientIdDesc: "Client ID from your Spotify Developer Dashboard",
-    clientSecret: "Spotify Client Secret",
-    clientSecretDesc: "Client Secret from your Spotify Developer Dashboard",
     authInstruction: "Authenticate with Spotify to get your authorization code:",
+    authLinkedStatus: "Spotify account linked. Disconnect it to link a different one.",
+    authLegacyMigrationWarning: "The stored client secret was removed. Re-link your account to continue.",
     authBtn1: "1. Authenticate Spotify Account",
     authCodeUrl: "Authorization Code / URL",
-    authCodeUrlDesc: "Paste the redirect code or the complete URL here",
+    authCodeUrlDesc: "Paste the redirect URL you were sent to after approving the app",
     authBtn2: "2. Exchange Code & Save",
+    authBtnDisconnect: "Disconnect Spotify Account",
     winMediaHeader: "Windows Media Playback Mode",
     winMediaDesc: "No additional setup is required. The plugin will monitor and control media from Windows APIs directly, supporting Spotify and any other media players.",
     syncNative: "Sync with Steam Native Player",
@@ -106,8 +109,9 @@ const english: Translations = {
     toastErrorClientIdRequired: "Spotify Client ID is required for authentication.",
     toastAuthTitle: "Spotify Auth",
     toastAuthOpening: "Opening authorization URL in browser...",
-    toastErrorCredentialsRequired: "Client ID, Client Secret, and Auth Code/URL are required.",
+    toastErrorCredentialsRequired: "Client ID and the redirect URL/code are required.",
     toastAuthLinked: "Successfully linked Spotify account!",
+    toastAuthDisconnected: "Spotify account disconnected.",
     toastAuthErrorTitle: "Spotify Auth Error",
     toastAuthExchangeFailed: "Failed to exchange authorization code.",
     testNotifBody: "Get Ready for Premium Tunes!",
@@ -141,13 +145,14 @@ const spanish: Translations = {
     serverPortDesc: "Puerto del servidor local de reproducción de Spotify",
     clientId: "ID de cliente de Spotify",
     clientIdDesc: "ID de cliente desde tu panel de desarrollador de Spotify",
-    clientSecret: "Secreto de cliente de Spotify",
-    clientSecretDesc: "Secreto de cliente desde tu panel de desarrollador de Spotify",
     authInstruction: "Autentícate con Spotify para obtener tu código de autorización:",
+    authLinkedStatus: "Cuenta de Spotify vinculada. Desconéctala para vincular otra.",
+    authLegacyMigrationWarning: "El client secret guardado se ha eliminado. Vuelve a vincular tu cuenta para continuar.",
     authBtn1: "1. Autenticar cuenta de Spotify",
     authCodeUrl: "Código de autorización / URL",
-    authCodeUrlDesc: "Pega el código de redirección o la URL completa aquí",
+    authCodeUrlDesc: "Pega la URL de redirección a la que te enviaron tras aprobar la app",
     authBtn2: "2. Canjear código y guardar",
+    authBtnDisconnect: "Desconectar cuenta de Spotify",
     winMediaHeader: "Modo de reproducción de Windows Media",
     winMediaDesc: "No se requiere configuración adicional. El plugin monitoreará y controlará el contenido multimedia directamente desde las APIs de Windows, compatible con Spotify y cualquier otro reproductor.",
     syncNative: "Sincronizar con el reproductor nativo de Steam",
@@ -170,8 +175,9 @@ const spanish: Translations = {
     toastErrorClientIdRequired: "Se requiere el ID de cliente de Spotify para la autenticación.",
     toastAuthTitle: "Autenticación de Spotify",
     toastAuthOpening: "Abriendo URL de autorización en el navegador...",
-    toastErrorCredentialsRequired: "Se requieren el ID de cliente, el Secreto de cliente y el Código/URL de autorización.",
+    toastErrorCredentialsRequired: "Se requieren el ID de cliente y el Código/URL de autorización.",
     toastAuthLinked: "¡Cuenta de Spotify vinculada con éxito!",
+    toastAuthDisconnected: "Cuenta de Spotify desconectada.",
     toastAuthErrorTitle: "Error de autenticación de Spotify",
     toastAuthExchangeFailed: "Error al canjear el código de autorización.",
     testNotifBody: "¡Prepárate para la mejor música!",
@@ -205,13 +211,14 @@ const portuguese: Translations = {
     serverPortDesc: "Porta do servidor de reprodução local do Spotify",
     clientId: "ID de Cliente do Spotify",
     clientIdDesc: "ID de cliente do seu Painel de Desenvolvedor do Spotify",
-    clientSecret: "Segredo do Cliente do Spotify",
-    clientSecretDesc: "Segredo do cliente do seu Painel de Desenvolvedor do Spotify",
     authInstruction: "Autentique-se com o Spotify para obter o seu código de autorização:",
+    authLinkedStatus: "Conta do Spotify vinculada. Desconecte para vincular outra.",
+    authLegacyMigrationWarning: "O client secret guardado foi removido. Vincule a sua conta novamente para continuar.",
     authBtn1: "1. Autenticar Conta do Spotify",
     authCodeUrl: "Código de Autorização / URL",
-    authCodeUrlDesc: "Cole o código de redirecionamento ou a URL completa aqui",
+    authCodeUrlDesc: "Cole a URL de redirecionamento para a qual foi enviado após aprovar o aplicativo",
     authBtn2: "2. Resgatar Código e Salvar",
+    authBtnDisconnect: "Desconectar Conta do Spotify",
     winMediaHeader: "Modo de Reprodução do Windows Media",
     winMediaDesc: "Nenhuma configuração adicional é necessária. O plugin monitorará e controlará a mídia diretamente das APIs do Windows, suportando o Spotify e qualquer outro reprodutor de mídia.",
     syncNative: "Sincronizar com o Reprodutor Nativo do Steam",
@@ -234,8 +241,9 @@ const portuguese: Translations = {
     toastErrorClientIdRequired: "O ID de Cliente do Spotify é obrigatório para autenticação.",
     toastAuthTitle: "Autenticação do Spotify",
     toastAuthOpening: "Abrindo URL de autorização no navegador...",
-    toastErrorCredentialsRequired: "O ID de Cliente, Segredo do Cliente e Código/URL de Autorização são obrigatórios.",
+    toastErrorCredentialsRequired: "O ID de Cliente e o Código/URL de Autorização são obrigatórios.",
     toastAuthLinked: "Conta do Spotify vinculada com sucesso!",
+    toastAuthDisconnected: "Conta do Spotify desconectada.",
     toastAuthErrorTitle: "Erro de Autenticação do Spotify",
     toastAuthExchangeFailed: "Falha ao resgatar o código de autorização.",
     testNotifBody: "Prepare-se para Músicas Incríveis!",

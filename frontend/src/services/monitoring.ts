@@ -5,6 +5,7 @@ import { SpotifyNotifications } from "./notifications";
 import { updateTrackState } from "./state";
 import { callable } from "@steambrew/client";
 import { t } from "../utils/localization";
+import { isTokenExpired, refreshAccessToken } from "./auth";
 
 const getDaemonPort = callable<[], string>("get_daemon_port");
 
@@ -69,67 +70,15 @@ export function listenToChannel(callback: (e: MessageEvent) => void) {
     };
 }
 
-// Helper to check token expiration
-export const isTokenExpired = () => {
-    const expiry = localStorage.getItem(STORAGE_KEYS.TOKEN_EXPIRY);
-    if (!expiry) return true;
-    return Date.now() > parseInt(expiry, 10);
-};
-
-// Exchanging Authorization Code for tokens
-export async function exchangeAuthCode(clientId: string, clientSecret: string, code: string): Promise<{ accessToken: string, refreshToken: string, expiresIn: number }> {
-    const response = await fetch("https://accounts.spotify.com/api/token", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": "Basic " + btoa(`${clientId}:${clientSecret}`)
-        },
-        body: new URLSearchParams({
-            grant_type: "authorization_code",
-            code: code.trim(),
-            redirect_uri: "http://localhost:8888/callback"
-        })
-    });
-    
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Spotify Auth Error: ${response.status} - ${errorText}`);
-    }
-    
-    const data = await response.json();
-    return {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresIn: data.expires_in
-    };
-}
-
-// Refreshing Access Token
-export async function refreshAccessToken(clientId: string, clientSecret: string, refreshToken: string): Promise<string> {
-    const response = await fetch("https://accounts.spotify.com/api/token", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": "Basic " + btoa(`${clientId}:${clientSecret}`)
-        },
-        body: new URLSearchParams({
-            grant_type: "refresh_token",
-            refresh_token: refreshToken
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error(`Token Refresh Failed: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-    localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, (Date.now() + data.expires_in * 1000).toString());
-    return data.access_token;
-}
+export { isTokenExpired };
 
 // Spotify monitoring loop implementation
 export async function startMonitoring() {
+    if (activeSocket) {
+        activeSocket.removeAllListeners();
+        activeSocket.disconnect();
+        activeSocket = null;
+    }
     if (monitoringTimer) {
         clearInterval(monitoringTimer);
         monitoringTimer = null;
@@ -228,7 +177,6 @@ export async function startMonitoring() {
 
     // Spotify Web API logic
     const clientId = localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || "";
-    const clientSecret = localStorage.getItem(STORAGE_KEYS.CLIENT_SECRET) || "";
     const intervalSec = parseFloat(localStorage.getItem(STORAGE_KEYS.POLLING_INTERVAL) || "2.0");
 
     const processCurrentlyPlaying = (data: any) => {
@@ -283,7 +231,7 @@ export async function startMonitoring() {
             // Auto-refresh token if expired
             if (isTokenExpired() && refreshToken) {
                 console.log("Access token expired. Refreshing...");
-                token = await refreshAccessToken(clientId, clientSecret, refreshToken);
+                token = (await refreshAccessToken(clientId, refreshToken)).accessToken;
             }
 
             const response = await fetch("https://api.spotify.com/v1/me/player", {
@@ -294,7 +242,7 @@ export async function startMonitoring() {
 
             if (response.status === 401 && refreshToken) {
                 // Force refresh token on unauthorized and retry once
-                token = await refreshAccessToken(clientId, clientSecret, refreshToken);
+                token = (await refreshAccessToken(clientId, refreshToken)).accessToken;
                 const retryResponse = await fetch("https://api.spotify.com/v1/me/player", {
                     headers: {
                         "Authorization": `Bearer ${token}`
@@ -322,7 +270,7 @@ export async function startMonitoring() {
     const startWebAPIFallback = () => {
         if (mode === "playback") {
             // Only fall back if in playback mode and Web API credentials are set
-            if (!clientId || !clientSecret) {
+            if (!clientId || !localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN)) {
                 console.warn("Local API not responding, but official Spotify Web API is not configured.");
                 return;
             }
@@ -355,10 +303,6 @@ export async function startMonitoring() {
 
     // Otherwise, we are in "playback" mode (which has automatic fallback)
     console.log(`Starting Playback API WebSocket connection to ws://${host}:${port}...`);
-    
-    if (activeSocket) {
-        activeSocket.disconnect();
-    }
 
     isUsingLocalAPI = false; // Default to false until we successfully connect
 
@@ -572,6 +516,7 @@ export function stopMonitoring() {
         fallbackTimer = null;
     }
     if (activeSocket) {
+        activeSocket.removeAllListeners();
         activeSocket.disconnect();
         activeSocket = null;
     }
@@ -643,6 +588,7 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
                     activeSocket.emit(command, value);
                 }
                 console.log(`[Spotify Notifications API] Socket.IO event emitted for command: ${command}`);
+                return;
             }
         }
         
@@ -678,7 +624,6 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
     } else {
         // Web API Mode
         const clientId = localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || "";
-        const clientSecret = localStorage.getItem(STORAGE_KEYS.CLIENT_SECRET) || "";
         const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
         let token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
 
@@ -692,7 +637,7 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
         if (isTokenExpired() && refreshToken) {
             try {
                 console.log(`[Spotify Notifications API] Access token expired. Refreshing before command...`);
-                token = await refreshAccessToken(clientId, clientSecret, refreshToken);
+                token = (await refreshAccessToken(clientId, refreshToken)).accessToken;
             } catch (err) {
                 console.error("[Spotify Notifications API] Token refresh failed in playback command:", err);
                 return;

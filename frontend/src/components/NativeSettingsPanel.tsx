@@ -8,7 +8,13 @@ import {
 } from "@steambrew/client";
 import React, { useState } from "react";
 import { STORAGE_KEYS } from "../constants/keys";
-import { startMonitoring, stopMonitoring, exchangeAuthCode, postToChannel } from "../services/monitoring";
+import { startMonitoring, stopMonitoring, postToChannel } from "../services/monitoring";
+import {
+    beginAuthorization,
+    exchangeAuthCode,
+    disconnectSpotify,
+    migrateLegacyAuth
+} from "../services/auth";
 import { SpotifyNotifications } from "../services/notifications";
 import { t } from "../utils/localization";
 
@@ -19,14 +25,16 @@ export const SpotifySettingsIcon: React.FC = () => (
 );
 
 export const NativeSettingsPanel: React.FC = () => {
+    const legacyMigration = migrateLegacyAuth();
+
     const [mode, setMode] = useState<"playback" | "webapi" | "winmedia">(
         (localStorage.getItem(STORAGE_KEYS.MODE) as "playback" | "webapi" | "winmedia") || "playback"
     );
     const [host, setHost] = useState(localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1");
     const [port, setPort] = useState(localStorage.getItem(STORAGE_KEYS.PORT) || "8443");
     const [clientId, setClientId] = useState(localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || "");
-    const [clientSecret, setClientSecret] = useState(localStorage.getItem(STORAGE_KEYS.CLIENT_SECRET) || "");
     const [authCode, setAuthCode] = useState("");
+    const [isLinked, setIsLinked] = useState(!!localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN));
     const [pollingInterval, setPollingInterval] = useState(
         parseFloat(localStorage.getItem(STORAGE_KEYS.POLLING_INTERVAL) || "2.0")
     );
@@ -51,7 +59,6 @@ export const NativeSettingsPanel: React.FC = () => {
         localStorage.setItem(STORAGE_KEYS.HOST, host);
         localStorage.setItem(STORAGE_KEYS.PORT, port);
         localStorage.setItem(STORAGE_KEYS.CLIENT_ID, clientId);
-        localStorage.setItem(STORAGE_KEYS.CLIENT_SECRET, clientSecret);
         localStorage.setItem(STORAGE_KEYS.POLLING_INTERVAL, pollingInterval.toString());
         localStorage.setItem(STORAGE_KEYS.MIN_INTERVAL, minInterval.toString());
         localStorage.setItem(STORAGE_KEYS.PLAY_SOUND, playSound.toString());
@@ -73,7 +80,7 @@ export const NativeSettingsPanel: React.FC = () => {
         } as any);
     };
 
-    const handleAuthenticate = () => {
+    const handleAuthenticate = async () => {
         if (!clientId) {
             toaster.toast({
                 title: t("toastErrorTitle"),
@@ -82,21 +89,28 @@ export const NativeSettingsPanel: React.FC = () => {
             } as any);
             return;
         }
-        
-        const redirectUri = encodeURIComponent("http://localhost:8888/callback");
-        const scopes = encodeURIComponent("user-read-currently-playing user-read-playback-state user-modify-playback-state");
-        const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scopes}`;
-        
-        toaster.toast({
-            title: t("toastAuthTitle"),
-            body: t("toastAuthOpening"),
-            eType: 1
-        } as any);
-        window.open(authUrl, "_blank");
+
+        try {
+            localStorage.setItem(STORAGE_KEYS.CLIENT_ID, clientId);
+            const { authUrl } = await beginAuthorization(clientId);
+
+            toaster.toast({
+                title: t("toastAuthTitle"),
+                body: t("toastAuthOpening"),
+                eType: 1
+            } as any);
+            window.open(authUrl, "_blank");
+        } catch (err: any) {
+            toaster.toast({
+                title: t("toastAuthErrorTitle"),
+                body: err.message || t("toastAuthExchangeFailed"),
+                eType: 2
+            } as any);
+        }
     };
 
     const handleExchangeCode = async () => {
-        if (!clientId || !clientSecret || !authCode) {
+        if (!clientId || !authCode) {
             toaster.toast({
                 title: t("toastErrorTitle"),
                 body: t("toastErrorCredentialsRequired"),
@@ -106,25 +120,35 @@ export const NativeSettingsPanel: React.FC = () => {
         }
 
         try {
-            let actualCode = authCode.trim();
-            if (actualCode.includes("code=")) {
-                const urlObj = new URL(actualCode);
-                actualCode = urlObj.searchParams.get("code") || actualCode;
-            }
-
-            const tokens = await exchangeAuthCode(clientId, clientSecret, actualCode);
-            
-            localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, tokens.accessToken);
-            localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, tokens.refreshToken);
-            localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, (Date.now() + tokens.expiresIn * 1000).toString());
+            await exchangeAuthCode(clientId, authCode);
 
             setAuthCode("");
+            setIsLinked(true);
             toaster.toast({
                 title: t("toastSavedTitle"),
                 body: t("toastAuthLinked"),
                 eType: 1
             } as any);
-            
+
+            saveSettings();
+        } catch (err: any) {
+            toaster.toast({
+                title: t("toastAuthErrorTitle"),
+                body: err.message || t("toastAuthExchangeFailed"),
+                eType: 2
+            } as any);
+        }
+    };
+
+    const handleDisconnect = async () => {
+        try {
+            await disconnectSpotify();
+            setIsLinked(false);
+            toaster.toast({
+                title: t("toastSavedTitle"),
+                body: t("toastAuthDisconnected"),
+                eType: 1
+            } as any);
             saveSettings();
         } catch (err: any) {
             toaster.toast({
@@ -190,18 +214,16 @@ export const NativeSettingsPanel: React.FC = () => {
                         value={clientId}
                         onChange={(e) => setClientId(e.target.value)}
                     />
-                    <TextField
-                        label={t("clientSecret")}
-                        description={t("clientSecretDesc")}
-                        bIsPassword={true}
-                        value={clientSecret}
-                        onChange={(e) => setClientSecret(e.target.value)}
-                    />
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "10px", background: "rgba(0, 0, 0, 0.15)", borderRadius: "6px" }}>
                         <div style={{ fontSize: "12px", color: "#a3a3ac" }}>
-                            {t("authInstruction")}
+                            {isLinked ? t("authLinkedStatus") : t("authInstruction")}
                         </div>
-                        <ButtonItem onClick={handleAuthenticate}>
+                        {legacyMigration.requiresRelink && (
+                            <div style={{ fontSize: "12px", color: "#f0a02a" }}>
+                                {t("authLegacyMigrationWarning")}
+                            </div>
+                        )}
+                        <ButtonItem onClick={handleAuthenticate} disabled={isLinked}>
                             {t("authBtn1")}
                         </ButtonItem>
                         <TextField
@@ -213,6 +235,11 @@ export const NativeSettingsPanel: React.FC = () => {
                         <ButtonItem onClick={handleExchangeCode} disabled={!authCode}>
                             {t("authBtn2")}
                         </ButtonItem>
+                        {isLinked && (
+                            <ButtonItem onClick={handleDisconnect}>
+                                {t("authBtnDisconnect")}
+                            </ButtonItem>
+                        )}
                     </div>
                 </>
             )}
