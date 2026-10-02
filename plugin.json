@@ -3,7 +3,7 @@
 
     "name": "spotify-notifications",
     "common_name": "Spotify Notifications",
-    "description": "Integrates Spotify with Steam to show notifications when new songs start playing",
+    "description": "Shows Steam notifications and a floating mini-player for whatever Windows is playing (Spotify, a browser, VLC, anything with a media session). Works out of the box; optional Spotify Web API mode adds volume, seek, shuffle and repeat.",
     "version": "1.1.0",
     "author": "eme22",
     "backendType": "lua",
