@@ -8,6 +8,7 @@ import { t } from "../utils/localization";
 import { isTokenExpired, refreshAccessToken } from "./auth";
 
 const getDaemonPort = callable<[], string>("get_daemon_port");
+const getDaemonToken = callable<[], string>("get_daemon_token");
 
 let cachedDaemonPort: string | null = null;
 
@@ -16,12 +17,69 @@ async function getOrFetchDaemonPort(): Promise<string> {
         return cachedDaemonPort;
     }
     try {
-        cachedDaemonPort = await getDaemonPort();
+        const raw = await getDaemonPort();
+        // Same wrapper concern as the token: keep only digits so a quoted value cannot end up
+        // embedded in the URL or silently fail the "0" sentinel comparison.
+        const digits = (raw || "").trim().match(/\d+/);
+        cachedDaemonPort = digits ? digits[0] : "0";
+        if (!cachedDaemonPort || cachedDaemonPort === "0") {
+            cachedDaemonPort = "0";
+        }
     } catch (e) {
         console.error("Failed to call get_daemon_port RPC:", e);
         cachedDaemonPort = "0";
     }
     return cachedDaemonPort || "0";
+}
+
+// The daemon rejects requests that lack this header, so it is mandatory on every call.
+// It is a per-boot hex secret handed over by the Lua backend; see backend/main.lua.
+const DAEMON_TOKEN_HEADER = "x-mediadaemon-token";
+
+// Diagnostics that fire from a 1.5s poll are throttled to once per session.
+let warnedAboutWrapper = false;
+let warnedAbout403 = false;
+
+async function daemonHeaders(): Promise<Record<string, string>> {
+    let raw = "";
+    try {
+        raw = await getDaemonToken();
+    } catch (e) {
+        console.error("Failed to call get_daemon_token RPC:", e);
+        return {};
+    }
+
+    if (!raw) {
+        console.error(
+            "get_daemon_token returned an empty string. The Lua backend has no token, so the " +
+            "daemon will reject us with 403. This means the port.txt handshake did not complete."
+        );
+        return {};
+    }
+
+    // The daemon compares this value byte for byte, so any wrapper the RPC layer adds around the
+    // string (quoting, whitespace) makes an otherwise valid token fail with 403. Observed as a
+    // 66-character value for a 64-character hex token, i.e. one quote either side.
+    // Accept the value only if a well-formed hex token is present inside it.
+    const match = raw.trim().match(/[0-9a-f]{64}/);
+    if (!match) {
+        console.error(
+            `Daemon token is not a 64-char hex string (length ${raw.length}, starts with ` +
+            `${JSON.stringify(raw.slice(0, 8))}). It will be rejected with 403.`
+        );
+        return {};
+    }
+
+    const token = match[0];
+    if (token !== raw.trim() && !warnedAboutWrapper) {
+        warnedAboutWrapper = true;
+        console.warn(
+            `The backend supplied the daemon token wrapped in extra characters ` +
+            `(${raw.length - token.length} stripped). Handled automatically.`
+        );
+    }
+
+    return { [DAEMON_TOKEN_HEADER]: token };
 }
 
 const getMimeTypeFromBase64 = (base64Str: string): string => {
@@ -88,7 +146,7 @@ export async function startMonitoring() {
         fallbackTimer = null;
     }
 
-    const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "playback";
+    const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia";
     const playSound = localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true";
     const minNotificationInterval = parseFloat(localStorage.getItem(STORAGE_KEYS.MIN_INTERVAL) || "2.0");
     const disableNotifications = localStorage.getItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS) === "true";
@@ -105,8 +163,25 @@ export async function startMonitoring() {
                     return;
                 }
 
-                const response = await fetch(`http://127.0.0.1:${port}/state`);
+                const response = await fetch(`http://127.0.0.1:${port}/state`, {
+                    headers: await daemonHeaders()
+                });
                 if (!response.ok) {
+                    if (response.status === 403 && !warnedAbout403) {
+                        // The daemon rejects requests whose token does not match its own. That
+                        // happens when the daemon was respawned without the Lua backend redoing
+                        // the port.txt handshake, so the token it is handing out is stale.
+                        // Drop the cached port so the next poll re-reads both from Lua.
+                        warnedAbout403 = true;
+                        console.error(
+                            "Daemon rejected the request (403): its token and the one the backend " +
+                            "sends differ, so the daemon was restarted without a new handshake. " +
+                            "Re-fetching port and token."
+                        );
+                        cachedDaemonPort = null;
+                    } else {
+                        console.error(`Daemon returned HTTP ${response.status} for /state`);
+                    }
                     updateTrackState(null);
                     postToChannel({ type: "TRACK_UPDATE", track: null });
                     return;
@@ -524,6 +599,9 @@ export function stopMonitoring() {
     lastTrackId = null;
     lastNotificationTime = 0;
     cachedDaemonPort = null;
+    // A monitoring restart is a fresh start: allow the 403 diagnostic to fire again if the
+    // daemon is out of sync with the backend after this point.
+    warnedAbout403 = false;
     console.log("Spotify monitoring halted.");
 }
 
@@ -531,14 +609,17 @@ export function stopMonitoring() {
 export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "previous" | "volume" | "seek" | "shuffle" | "repeat", value?: any) {
     console.log(`[Spotify Notifications API] sendPlaybackCommand invoked: command=${command}, value=${value}, isUsingLocalAPI=${isUsingLocalAPI}`);
     
-    const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "playback";
+    const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia";
     if (mode === "winmedia") {
         console.log(`[Spotify Notifications API] Windows Media Mode - command=${command}`);
         if (command === "play" || command === "pause" || command === "next" || command === "previous") {
             try {
                 const port = await getOrFetchDaemonPort();
                 if (port !== "0") {
-                    const res = await fetch(`http://127.0.0.1:${port}/command?cmd=${command}`, { method: "POST" });
+                    const res = await fetch(`http://127.0.0.1:${port}/command?cmd=${command}`, {
+                        method: "POST",
+                        headers: await daemonHeaders()
+                    });
                     console.log(`[Spotify Notifications API] Windows Media command result status: ${res.status}`);
                 } else {
                     console.error("[Spotify Notifications API] Daemon port not initialized!");

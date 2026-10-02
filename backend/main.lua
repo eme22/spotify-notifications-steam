@@ -105,8 +105,23 @@ end
 -- Global variable to cache the MediaDaemon web server port
 local daemon_port = nil
 
+-- Per-boot shared secret used to authenticate us against the daemon's HTTP API.
+-- Read from the port.txt handshake together with the port.
+local daemon_token = nil
+
 function get_daemon_port()
     return tostring(daemon_port or "0")
+end
+
+function get_daemon_token()
+    return tostring(daemon_token or "")
+end
+
+-- The daemon rejects any request without a valid token, so every curl we issue must carry
+-- the header. The token is hex, which is safe to embed in a header value.
+local function auth_header()
+    if not daemon_token then return "" end
+    return '-H "x-mediadaemon-token: ' .. daemon_token .. '"'
 end
 
 -- Fetch info+ logs from the daemon HTTP /logs endpoint and forward to Lua logger
@@ -114,7 +129,7 @@ function get_daemon_logs()
     if not daemon_port or daemon_port == 0 then return "" end
 
     local ok, result = pcall(function()
-        local cmd = 'curl -s --max-time 2 "http://127.0.0.1:' .. tostring(daemon_port) .. '/logs"'
+        local cmd = 'curl -s --max-time 2 ' .. auth_header() .. ' "http://127.0.0.1:' .. tostring(daemon_port) .. '/logs"'
         local handle = io.popen(cmd)
         if not handle then return "" end
         local response = handle:read("*a")
@@ -177,14 +192,23 @@ local function on_load()
         logger:info("Media daemon launched successfully via FFI.")
     end
 
-    -- Poll for the port.txt handshake file (up to 20 attempts, 2 seconds max)
+    -- Poll for the port.txt handshake file (up to 20 attempts, 2 seconds max).
+    -- The file holds two lines: the port, then the per-boot auth token.
     local port = nil
     for i = 1, 20 do
         local f = io.open(port_file, "r")
         if f then
-            port = f:read("*a"):gsub("%s+", "")
+            local contents = f:read("*a")
             f:close()
             os.remove(port_file) -- Delete immediately after discovery
+
+            local port_str, token = contents:match("^%s*(%d+)%s*(%S*)%s*$")
+            port = tonumber(port_str)
+            if port and token ~= "" then
+                daemon_token = token
+            else
+                port = nil
+            end
             break
         end
 
@@ -197,13 +221,15 @@ local function on_load()
         end
     end
 
-    if port and tonumber(port) then
-        daemon_port = tonumber(port)
+    if port and daemon_token then
+        daemon_port = port
         logger:info("Media daemon API discovered and listening on localhost port: " .. tostring(daemon_port))
         -- Fetch any startup logs from the daemon
         pcall(get_daemon_logs)
     else
-        logger:error("Media daemon port.txt handshake timed out or failed!")
+        daemon_port = nil
+        daemon_token = nil
+        logger:error("Media daemon port.txt handshake timed out, was malformed, or failed!")
     end
 
     millennium.ready()
@@ -217,9 +243,9 @@ local function on_unload()
     pcall(get_daemon_logs)
 
     -- Gracefully stop the daemon by invoking its HTTP API command endpoint
-    if daemon_port then
+    if daemon_port and daemon_token then
         logger:info("Sending stop command to MediaDaemon API on port " .. tostring(daemon_port))
-        local stop_cmd = 'curl -X POST "http://127.0.0.1:' .. tostring(daemon_port) .. '/command?cmd=stop"'
+        local stop_cmd = 'curl -X POST ' .. auth_header() .. ' "http://127.0.0.1:' .. tostring(daemon_port) .. '/command?cmd=stop"'
         run_silently(stop_cmd)
     end
 

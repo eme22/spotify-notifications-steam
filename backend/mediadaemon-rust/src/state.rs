@@ -97,13 +97,8 @@ impl CachedState {
                             } else {
                                 last_progress
                             };
-                            let drift = if progress > expected {
-                                progress - expected
-                            } else {
-                                expected - progress
-                            };
-                            drift > 3000
-                                || last_write_time.map_or(false, |t| t.elapsed().as_secs() >= 15)
+                            progress.abs_diff(expected) > 3000
+                                || last_write_time.is_some_and(|t| t.elapsed().as_secs() >= 15)
                         }
                 };
 
