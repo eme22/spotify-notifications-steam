@@ -1,5 +1,5 @@
 export const STORAGE_KEYS = {
-    MODE: "spotify_notif_mode", // 'playback' or 'webapi'
+    MODE: "spotify_notif_mode", // 'winmedia' (default, no setup), 'playback' or 'webapi'
     HOST: "spotify_notif_host",
     PORT: "spotify_notif_port",
     CLIENT_ID: "spotify_notif_client_id",

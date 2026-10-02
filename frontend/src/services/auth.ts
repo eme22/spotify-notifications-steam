@@ -241,7 +241,12 @@ export async function disconnectSpotify(): Promise<void> {
     markDisconnectFlag(true);
     try {
         const pending = [inflightExchange, inflightRefresh].filter(Boolean) as Promise<SpotifyTokenResponse>[];
-        await Promise.all(pending.map(p => p.catch(() => undefined)));
+        // Annotated explicitly: without it the callbacks' return types are implicitly `any`.
+        await Promise.all(
+            pending.map((p): Promise<SpotifyTokenResponse | undefined> =>
+                p.catch((): undefined => undefined)
+            )
+        );
     } finally {
         clearTokens();
         clearAuthTransaction();

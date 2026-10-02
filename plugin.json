@@ -5,7 +5,7 @@
     "common_name": "Spotify Notifications",
     "description": "Integrates Spotify with Steam to show notifications when new songs start playing",
     "version": "1.1.0",
-    "author": "Community Plugin",
+    "author": "eme22",
     "backendType": "lua",
     "tags": ["music", "notifications", "spotify", "integration"],
     "funding": "https://www.patreon.com/c/eme22"

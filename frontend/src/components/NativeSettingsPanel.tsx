@@ -28,7 +28,7 @@ export const NativeSettingsPanel: React.FC = () => {
     const legacyMigration = migrateLegacyAuth();
 
     const [mode, setMode] = useState<"playback" | "webapi" | "winmedia">(
-        (localStorage.getItem(STORAGE_KEYS.MODE) as "playback" | "webapi" | "winmedia") || "playback"
+        (localStorage.getItem(STORAGE_KEYS.MODE) as "playback" | "webapi" | "winmedia") || "winmedia"
     );
     const [host, setHost] = useState(localStorage.getItem(STORAGE_KEYS.HOST) || "127.0.0.1");
     const [port, setPort] = useState(localStorage.getItem(STORAGE_KEYS.PORT) || "8443");
