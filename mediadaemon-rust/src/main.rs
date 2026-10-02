@@ -11,7 +11,7 @@ use tokio::net::TcpListener as TokioTcpListener;
 use tracing_subscriber::prelude::*;
 
 use media::MediaProvider;
-use state::CachedState;
+use state::StateBuilder;
 
 #[cfg(windows)]
 use media::windows::WindowsMediaProvider;
@@ -97,8 +97,7 @@ async fn main() {
         }
     };
 
-    let cached_state = CachedState::new(provider.clone());
-    let state_json = cached_state.json();
+    let cached_state = StateBuilder::new(provider.clone());
 
     let port = get_free_port();
     let token = generate_token();
@@ -113,7 +112,7 @@ async fn main() {
     write_handshake_file(&port_file, &handshake).await;
 
     let app = http::build_router(
-        state_json,
+        cached_state,
         provider.clone(),
         log_buffer,
         token.clone(),
@@ -125,30 +124,7 @@ async fn main() {
 
     tracing::info!("MediaDaemon listening on 127.0.0.1:{}", port);
 
-    // Event-driven refresh via provider's change notifier
-    let cached_state_evt = cached_state.clone();
-    let provider_evt = provider.clone();
-    tokio::spawn(async move {
-        loop {
-            if let Some(notify) = provider_evt.change_notifier() {
-                notify.notified().await;
-                cached_state_evt.refresh().await;
-            } else {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-        }
-    });
-
-    // Periodic timer (1.5s) for progress sync while playing
-    let cached_state_timer = cached_state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1500));
-        loop {
-            interval.tick().await;
-            cached_state_timer.refresh().await;
-        }
-    });
-
-    // Start HTTP server
+    // No refresh loop: /state derives the requested session on demand, so a background task would
+    // only refresh a session nobody asked for.
     axum::serve(listener, app).await.unwrap();
 }

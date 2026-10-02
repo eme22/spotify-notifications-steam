@@ -53,6 +53,7 @@ export interface Translations {
     testNotifAlbum: string;
     miniPlayerOpen: string;
     miniPlayerMinimize: string;
+    sessionPicker: string;
     shuffleOn: string;
     shuffleOff: string;
     prevTrack: string;
@@ -119,6 +120,7 @@ const english: Translations = {
     testNotifAlbum: "Steam Integration",
     miniPlayerOpen: "Open Spotify Controller",
     miniPlayerMinimize: "Minimize Player",
+        sessionPicker: "Audio source",
     shuffleOn: "Shuffle: On",
     shuffleOff: "Shuffle: Off",
     prevTrack: "Previous Track",
@@ -185,6 +187,7 @@ const spanish: Translations = {
     testNotifAlbum: "Integración con Steam",
     miniPlayerOpen: "Abrir controlador de Spotify",
     miniPlayerMinimize: "Minimizar reproductor",
+        sessionPicker: "Fuente de audio",
     shuffleOn: "Aleatorio: Sí",
     shuffleOff: "Aleatorio: No",
     prevTrack: "Canción anterior",
@@ -251,6 +254,7 @@ const portuguese: Translations = {
     testNotifAlbum: "Integração com o Steam",
     miniPlayerOpen: "Abrir Controlador do Spotify",
     miniPlayerMinimize: "Minimizar Reprodutor",
+        sessionPicker: "Fonte de áudio",
     shuffleOn: "Aleatório: Ativado",
     shuffleOff: "Aleatório: Desativado",
     prevTrack: "Faixa Anterior",

@@ -8,11 +8,11 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::logs::LogBuffer;
 use crate::media::MediaProvider;
+use crate::state::StateBuilder;
 
 /// Header the plugin's Lua backend and frontend must send on every request.
 pub const TOKEN_HEADER: &str = "x-mediadaemon-token";
@@ -20,6 +20,24 @@ pub const TOKEN_HEADER: &str = "x-mediadaemon-token";
 #[derive(Deserialize)]
 struct CommandQuery {
     cmd: Option<String>,
+    /// Session to act on. Absent means "whichever one is playing".
+    session: Option<String>,
+}
+
+/// A blank `session` parameter means "no selection", not "the session whose id is empty".
+///
+/// This has to be normalised at the boundary: a query string of `?session=` deserialises to
+/// `Some("")`, which then fails to match any session and silently reports nothing playing. Clients
+/// legitimately send it whenever they are not pinning anything.
+fn requested(session: &Option<String>) -> Option<&str> {
+    session.as_deref().map(str::trim).filter(|id| !id.is_empty())
+}
+
+/// `session` comes from the query extractor rather than a hand-built URL, so an id can never turn
+/// into anything but a lookup key.
+#[derive(Deserialize)]
+struct SessionQuery {
+    session: Option<String>,
 }
 
 /// Origins the Steam client loads the plugin's web context from.
@@ -121,7 +139,7 @@ fn origin_of(request: &Request) -> String {
 }
 
 pub fn build_router(
-    state_json: Arc<RwLock<String>>,
+    builder: Arc<StateBuilder>,
     provider: Arc<dyn MediaProvider>,
     log_buffer: LogBuffer,
     token: String,
@@ -136,8 +154,12 @@ pub fn build_router(
 
     Router::new()
         .route("/state", get({
-            let state_json = state_json.clone();
-            move || get_state(state_json)
+            let builder = builder.clone();
+            move |query: axum::extract::Query<SessionQuery>| get_state(builder.clone(), query)
+        }))
+        .route("/sessions", get({
+            let provider = provider.clone();
+            move || get_sessions(provider.clone())
         }))
         .route("/command", post({
             let provider = provider.clone();
@@ -153,9 +175,55 @@ pub fn build_router(
         .layer(cors)
 }
 
-async fn get_state(state_json: Arc<RwLock<String>>) -> (axum::http::StatusCode, String) {
-    let json = state_json.read().await;
-    (axum::http::StatusCode::OK, json.clone())
+async fn get_state(
+    builder: Arc<StateBuilder>,
+    query: axum::extract::Query<SessionQuery>,
+) -> (axum::http::StatusCode, String) {
+    // Derived per request rather than served from a timer-refreshed cache: the caller names the
+    // session, and only the cover art is worth reusing between calls.
+    let json = builder.build(requested(&query.0.session)).await;
+    (axum::http::StatusCode::OK, json)
+}
+
+/// Every session SMTC knows about, for the session picker and for per-session notifications.
+///
+/// Sessions outlive the app that registered them, so the list includes apps that stopped hours
+/// ago. The caller shows them as history and does not notify on their behalf.
+async fn get_sessions(provider: Arc<dyn MediaProvider>) -> (axum::http::StatusCode, String) {
+    let sessions = provider.sessions();
+    let items: Vec<serde_json::Value> = sessions
+        .iter()
+        .map(|session| {
+            let track = &session.track;
+            let status = track.status.to_string();
+            // Same age correction as /state, so the list and the detail agree on where the track is.
+            let advanced = if status == "Playing" {
+                track.progress_ms.saturating_add(track.position_age_ms)
+            } else {
+                track.progress_ms
+            };
+            let progress = if track.duration_ms > 0 {
+                advanced.min(track.duration_ms)
+            } else {
+                advanced
+            };
+            serde_json::json!({
+                "id": session.id,
+                "app": session.app_name,
+                "title": track.title,
+                "artist": track.artist,
+                "album": track.album,
+                "status": status,
+                "progress": progress,
+                "duration": track.duration_ms,
+            })
+        })
+        .collect();
+
+    (
+        axum::http::StatusCode::OK,
+        serde_json::json!({ "sessions": items }).to_string(),
+    )
 }
 
 async fn get_logs(log_buffer: LogBuffer) -> (axum::http::StatusCode, String) {
@@ -172,10 +240,12 @@ async fn post_command(
     provider: Arc<dyn MediaProvider>,
 ) -> axum::http::StatusCode {
     match query.cmd.as_deref() {
-        Some("play") => provider.play().await,
-        Some("pause") => provider.pause().await,
-        Some("next") => provider.next().await,
-        Some("previous") => provider.previous().await,
+        Some("play") | Some("pause") | Some("next") | Some("previous") => {
+            let session = requested(&query.session);
+            provider
+                .command(session, query.cmd.as_deref().unwrap())
+                .await
+        }
         Some("stop") => {
             tracing::info!("Stop command received, initiating shutdown");
             std::process::exit(0);

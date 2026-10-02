@@ -1,14 +1,29 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
-import { postToChannel, listenToChannel } from "../services/monitoring";
+import { postToChannel, listenToChannel, getPinnedSession, selectSession } from "../services/monitoring";
 import { currentTrackState, onTrackChange } from "../services/state";
+import { STORAGE_KEYS } from "../constants/keys";
 import { formatTime } from "../utils/helpers";
 import { console } from "../utils/logger";
 import { t } from "../utils/localization";
 
+// Re-anchoring thresholds for the seek bar. Deliberately asymmetric.
+//
+// The daemon republishes an age-corrected position on every 1.5s refresh, so what arrives here can
+// be up to one refresh old. That is the normal case, not an error, and treating it as a discrepancy
+// is what produced the visible loop: the bar kept advancing past the stale sample, crossed the
+// threshold, snapped back, and did it again on the next report. Forward drift has a tighter budget
+// because it means the source really did jump (a seek or a new track). Backward drift gets a much
+// looser budget because a stale sample can only ever lag, while a genuine backwards seek is orders
+// of magnitude larger.
+const FORWARD_RESYNC_TOLERANCE_MS = 2500;
+const BACKWARD_RESYNC_TOLERANCE_MS = 5000;
+
 export const SpotifyMiniPlayer: React.FC = () => {
     const [track, setTrack] = useState<any>(currentTrackState);
     const [isCollapsed, setIsCollapsed] = useState(true);
+    const [sessions, setSessions] = useState<any[]>([]);
+    const [pinned, setPinned] = useState<string>(() => getPinnedSession());
     const [localProgress, setLocalProgress] = useState(0);
     const localProgressRef = useRef<number>(0);
 
@@ -31,6 +46,15 @@ export const SpotifyMiniPlayer: React.FC = () => {
         const unsubscribeChannel = listenToChannel((e: MessageEvent) => {
             if (e.data.type === "TRACK_UPDATE") {
                 setTrack(e.data.track);
+            } else if (e.data.type === "SESSIONS_UPDATE") {
+                setSessions(Array.isArray(e.data.sessions) ? e.data.sessions : []);
+            }
+        });
+
+        // React to a selection made in another window (the settings panel, or a second overlay).
+        const unsubscribeSelection = listenToChannel((e: MessageEvent) => {
+            if (e.data.type === "SESSION_SELECTED") {
+                setPinned(e.data.session || "");
             }
         });
 
@@ -41,8 +65,69 @@ export const SpotifyMiniPlayer: React.FC = () => {
         return () => {
             unsubscribe();
             unsubscribeChannel();
+            unsubscribeSelection();
         };
     }, []);
+
+    /**
+     * Pin the session the player and its buttons act on.
+     *
+     * The pin survives the system reassigning its notion of the "current" session, which is the
+     * whole point: pausing one app used to hand the plugin a different one. It only gives way when
+     * the pinned session stops existing, and then the auto choice takes over until the user picks
+     * again.
+     */
+    const handleSelectSession = (sessionId: string) => {
+        selectSession(sessionId);
+        setPinned(sessionId);
+        postToChannel({ type: "SESSION_SELECTED", session: sessionId });
+    };
+
+    /**
+     * Which session the selector shows as chosen.
+     *
+     * The user's pin wins whenever it is still usable. Otherwise this follows what the daemon
+     * decided on its own, which is the session that is actually playing rather than whatever the
+     * system considers foreground.
+     *
+     * The empty-pin case has to fall through too: with nothing pinned there is no id to show, and a
+     * `<select>` whose value matches no option silently displays the first one instead, which looks
+     * like the plugin reporting the wrong app.
+     */
+    const pinnedIsUsable = !!pinned && sessions.some(session => session.id === pinned);
+    const activeSessionId = pinnedIsUsable ? pinned : (track?.session_id || "");
+
+    // Never let the selector's value fall outside its own options: a value with no matching option
+    // makes the control display the first entry, regardless of what is actually playing. The session
+    // being shown is always kept, even if it is stopped, because that is the one the player is on.
+    const selectableSessions = (() => {
+        const list = sessions.filter(session => session.status !== "Stopped" || session.id === activeSessionId);
+        if (activeSessionId && !list.some(session => session.id === activeSessionId)) {
+            // The list has not caught up yet. Show what the player is actually displaying so the
+            // selector agrees with it, rather than the first unrelated session.
+            list.unshift({
+                id: activeSessionId,
+                app: track?.app || "",
+                title: track?.name || "",
+                artist: track?.artist || "",
+                status: track?.is_playing ? "Playing" : "Paused"
+            });
+        }
+        return list;
+    })();
+
+    // Drop the pin when its app closes, so the daemon falls back to whatever is playing instead of
+    // reporting nothing. Guarded on a non-empty list: an empty one means the poll failed or has not
+    // landed yet, and clearing on that would silently discard the user's choice.
+    useEffect(() => {
+        if (!pinned || sessions.length === 0) return;
+        if (sessions.some(session => session.id === pinned)) return;
+
+        console.log(`[Spotify MiniPlayer] Pinned session ${pinned} disappeared, following the active one`);
+        selectSession("");
+        setPinned("");
+        postToChannel({ type: "SESSION_SELECTED", session: "" });
+    }, [sessions, pinned]);
 
     const baselineTrackIdRef = useRef<string | null>(null);
     const baselineProgressRef = useRef<number>(0);
@@ -61,9 +146,23 @@ export const SpotifyMiniPlayer: React.FC = () => {
         }
 
         const currentTrackId = track.id;
-        const currentProgress = track.progress_ms || 0;
+        const currentProgress = Math.max(0, track.progress_ms || 0);
         const currentTime = Date.now();
         const currentIsPlaying = track.is_playing || false;
+
+        // The bar must never run past the reported duration, whatever the estimate says.
+        const clampToTrack = (value: number) => {
+            const duration = track.duration_ms || 0;
+            return duration > 0 ? Math.min(value, duration) : value;
+        };
+
+        // Re-anchoring is the only thing that moves the displayed position by more than one tick,
+        // so it is the single place that needs to clamp.
+        const reanchor = (progress: number, now: number) => {
+            baselineProgressRef.current = progress;
+            baselineTimeRef.current = now;
+            updateLocalProgress(clampToTrack(progress));
+        };
 
         // Detect if this is the first lookup of this song, OR if the playing state changed
         const isFirstLookup = baselineTrackIdRef.current !== currentTrackId;
@@ -71,45 +170,40 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
         if (isFirstLookup) {
             baselineTrackIdRef.current = currentTrackId;
-            baselineProgressRef.current = currentProgress;
-            baselineTimeRef.current = currentTime;
             baselineIsPlayingRef.current = currentIsPlaying;
-            updateLocalProgress(currentProgress);
+            reanchor(currentProgress, currentTime);
             return;
         }
 
         if (isPlayStateChanged) {
             baselineTrackIdRef.current = currentTrackId;
             baselineIsPlayingRef.current = currentIsPlaying;
-            baselineTimeRef.current = currentTime;
 
-            if (!currentIsPlaying) {
-                // Paused: Freeze baseline progress at the exact current smooth localProgress position
-                baselineProgressRef.current = localProgressRef.current;
-                updateLocalProgress(localProgressRef.current);
-            } else {
-                // Resumed: Resume tracking from where we paused (baselineProgressRef.current),
-                // but reset baselineTimeRef to currentTime so elapsed starts counting from now!
-                updateLocalProgress(baselineProgressRef.current);
+            // Pause and resume both anchor on the position the backend just reported, which is the
+            // real one. Freezing on the locally predicted value instead left the bar on a guess, and
+            // the next poll then corrected it, so the bar visibly rewound on pause.
+            reanchor(currentProgress, currentTime);
+            return;
+        }
+
+        if (!currentIsPlaying) {
+            // Paused: the reported position has stopped moving, so it is the truth rather than a
+            // sample to be filtered. Adopt it directly instead of waiting for it to drift past a
+            // threshold that a frozen position only reaches by the bar over-running it.
+            if (currentProgress !== baselineProgressRef.current) {
+                reanchor(currentProgress, currentTime);
             }
             return;
         }
 
-        // Subsequent updates: calculate estimated progress based on baseline
-        let estimatedProgress = baselineProgressRef.current;
-        if (currentIsPlaying) {
-            estimatedProgress += (currentTime - baselineTimeRef.current);
-        }
+        // Playing: the bar advances locally between reports, so the reported position is compared
+        // against the estimate rather than against the previous baseline.
+        const estimatedProgress = baselineProgressRef.current + (currentTime - baselineTimeRef.current);
+        const drift = currentProgress - estimatedProgress;
 
-        // Check the discrepancy between estimated progress and the API's progress
-        const diff = Math.abs(currentProgress - estimatedProgress);
-
-        // If the difference is more than 3 seconds, update the baseline to the real API progress
-        if (diff > 3000) {
-            console.log(`[Spotify MiniPlayer] Discrepancy detected (${diff}ms > 3s). Resyncing baseline to API real progress: ${currentProgress}ms`);
-            baselineProgressRef.current = currentProgress;
-            baselineTimeRef.current = currentTime;
-            updateLocalProgress(currentProgress);
+        if (drift > FORWARD_RESYNC_TOLERANCE_MS || drift < -BACKWARD_RESYNC_TOLERANCE_MS) {
+            console.log(`[Spotify MiniPlayer] Resyncing to the reported position (drift ${drift}ms): ${currentProgress}ms`);
+            reanchor(currentProgress, currentTime);
         }
     }, [track]);
 
@@ -163,8 +257,12 @@ export const SpotifyMiniPlayer: React.FC = () => {
     if (!track) return null;
 
     const progressPercent = track.duration_ms > 0 ? (localProgress / track.duration_ms) * 100 : 0;
-    const isShuffleActive = track.shuffle_state === true;
-    const isRepeatActive = track.repeat_state === "context" || track.repeat_state === "track";
+    // SMTC exposes no shuffle or repeat control, so in Windows Media mode these buttons used to
+    // render as always-off and then quietly do nothing when pressed. They are only meaningful when
+    // the Spotify Web API is driving playback, which is the only mode that reports and honours them.
+    const supportsShuffleRepeat = (localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia") !== "winmedia";
+    const isShuffleActive = supportsShuffleRepeat && track.shuffle_state === true;
+    const isRepeatActive = supportsShuffleRepeat && (track.repeat_state === "context" || track.repeat_state === "track");
     const repeatTitle = track.repeat_state === "track" ? t("repeatOne") : track.repeat_state === "context" ? t("repeatAll") : t("repeatOff");
 
     const playerRef = useRef<HTMLDivElement>(null);
@@ -185,8 +283,8 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
         const target = e.target as HTMLElement;
         if (
-            target.closest("button") ||
-            target.closest(".window-controls") ||
+            target.closest("button") ||            target.closest("select") ||
+            target.closest("option") ||            target.closest(".window-controls") ||
             target.closest(".player-progress-container") ||
             target.closest(".player-artist") ||
             target.closest(".player-title")
@@ -408,6 +506,31 @@ export const SpotifyMiniPlayer: React.FC = () => {
                     color: var(--text-muted, #a3a3ac);
                 }
 
+                /* Session selector: which app the player and its buttons act on. Shown only when there is
+                       something to choose between, so a single-app setup looks exactly as before. */
+                .player-session-select {
+                    margin-top: 8px;
+                    width: 100%;
+                    background: rgba(0, 0, 0, 0.35);
+                    color: #d6d7d8;
+                    border: 1px solid rgba(255, 255, 255, 0.09);
+                    border-radius: 3px;
+                    padding: 4px 6px;
+                    font-size: 12px;
+                    font-family: 'Motiva Sans', sans-serif;
+                    cursor: pointer;
+                    outline: none;
+                }
+
+                .player-session-select:hover {
+                    background: rgba(0, 0, 0, 0.5);
+                }
+
+                .player-session-select option {
+                    background: #1b2838;
+                    color: #d6d7d8;
+                }
+
                 .player-controls {
                     display: flex;
                     justify-content: center;
@@ -543,8 +666,28 @@ export const SpotifyMiniPlayer: React.FC = () => {
                         </div>
                     </div>
 
+                    {selectableSessions.length > 1 && (
+                        <select
+                            className="player-session-select"
+                            value={activeSessionId}
+                            onChange={(event: React.ChangeEvent<HTMLSelectElement>) => handleSelectSession(event.target.value)}
+                            // The player is draggable, and a mousedown that reaches the drag handler
+                            // is preventDefault()ed, which stops the dropdown from ever opening.
+                            onMouseDown={(event: React.MouseEvent<HTMLSelectElement>) => event.stopPropagation()}
+                            title={t("sessionPicker")}
+                        >
+                            {selectableSessions.map(session => (
+                                <option key={session.id} value={session.id}>
+                                    {session.status === "Playing" ? "● " : "○ "}
+                                    {session.title} — {session.app}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+
                     {/* Controls Row */}
                     <div className="player-controls">
+                        {supportsShuffleRepeat && (
                         <button
                             type="button"
                             className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`}
@@ -555,6 +698,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
                             </svg>
                         </button>
+                        )}
                         <button
                             type="button"
                             className="DialogButton Secondary Focusable control-btn"
@@ -598,6 +742,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
                             </svg>
                         </button>
+                        {supportsShuffleRepeat && (
                         <button
                             type="button"
                             className={`DialogButton Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`}
@@ -615,6 +760,7 @@ export const SpotifyMiniPlayer: React.FC = () => {
                                 </svg>
                             )}
                         </button>
+                        )}
                     </div>
                 </div>
             )}

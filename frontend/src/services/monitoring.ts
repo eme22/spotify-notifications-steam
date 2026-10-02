@@ -12,6 +12,141 @@ const getDaemonToken = callable<[], string>("get_daemon_token");
 
 let cachedDaemonPort: string | null = null;
 
+/**
+ * The SMTC session the user pinned in the mini player.
+ *
+ * Empty means "follow whatever is playing". It is stored rather than held in the daemon because the
+ * daemon is torn down and respawned whenever the plugin reloads, which would silently drop a
+ * selection made seconds earlier.
+ */
+export function getPinnedSession(): string {
+    return localStorage.getItem(STORAGE_KEYS.SESSION) || "";
+}
+
+/** Pin a session, or pass "" to go back to following whatever plays. */
+export function selectSession(sessionId: string) {
+    localStorage.setItem(STORAGE_KEYS.SESSION, sessionId || "");
+    console.log(`[Spotify Notifications API] Session selection set to: ${sessionId || "(follow active)"}`);
+}
+
+/** Session list as last seen by the background poll, shared with the mini player. */
+export let availableSessions: any[] = [];
+
+function setAvailableSessions(sessions: any[]) {
+    availableSessions = sessions;
+    postToChannel({ type: "SESSIONS_UPDATE", sessions });
+}
+
+/** Append `session=<id>` only when one is pinned; an empty one means "follow whatever plays". */
+function withSession(path: string): string {
+    return withSessionId(path, getPinnedSession());
+}
+
+/** Same, with an explicit session rather than the pinned one. Used for per-session notifications. */
+function withSessionId(path: string, sessionId: string): string {
+    if (!sessionId) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}session=${encodeURIComponent(sessionId)}`;
+}
+
+async function daemonFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const port = await getOrFetchDaemonPort();
+    return fetch(`http://127.0.0.1:${port}${path}`, {
+        ...init,
+        headers: await daemonHeaders()
+    });
+}
+
+/**
+ * Poll the session list.
+ *
+ * This drives the notifications and the picker. It is deliberately separate from the `/state` poll:
+ * `/state` reports the session the widget has selected, so notifying from it would mean only ever
+ * hearing about that one app, and an app that starts playing while another is pinned would be
+ * silent.
+ */
+async function pollSessions(settings: NotificationSettings) {
+    try {
+        const port = await getOrFetchDaemonPort();
+        if (port === "0") {
+            setAvailableSessions([]);
+            return;
+        }
+        const response = await daemonFetch("/sessions");
+        if (!response.ok) return;
+
+        const raw = await response.text();
+        if (!raw || raw.trim() === "null") {
+            setAvailableSessions([]);
+            return;
+        }
+
+        const data = JSON.parse(raw);
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        setAvailableSessions(sessions);
+
+        for (const session of sessions) {
+            maybeNotifySession(session, settings);
+        }
+    } catch (err) {
+        console.error("Error polling media sessions:", err);
+    }
+}
+
+interface NotificationSettings {
+    disabled: boolean;
+    playSound: boolean;
+    minIntervalMs: number;
+}
+
+/**
+ * Announce a track the first time a session is seen playing it.
+ *
+ * Cover art only exists on `/state`, and reading it costs an image stream, so it is not on the
+ * session list. Rather than pay for art for every session on every poll, the detail is fetched once,
+ * on the transition, and the session list alone is enough to decide whether a notification is due.
+ */
+async function maybeNotifySession(session: any, settings: NotificationSettings) {
+    if (settings.disabled) return;
+
+    const sessionId = session?.id;
+    const title = session?.title;
+    if (!sessionId || !title) return;
+
+    // Only sessions that are actually playing notify: SMTC keeps a session alive long after its app
+    // stopped, and notifying on those would fire for whatever was last heard hours ago.
+    if (session.status !== "Playing") return;
+
+    const trackId = `${session.artist}:${title}`;
+    const now = Date.now();
+    const previous = notifiedTracks.get(sessionId);
+    if (previous && previous.trackId === trackId) return;
+    if (previous && now - previous.time < settings.minIntervalMs) return;
+
+    // Mark it before awaiting so a slow fetch cannot produce a second notification for the same
+    // track on the next poll.
+    notifiedTracks.set(sessionId, { trackId, time: now });
+
+    let detail: any = null;
+    try {
+        const response = await daemonFetch(withSessionId(`/state`, sessionId));
+        if (response.ok) {
+            const raw = await response.text();
+            if (raw && raw.trim() !== "null") detail = JSON.parse(raw);
+        }
+    } catch (err) {
+        console.error("Error fetching cover art for notification:", err);
+    }
+
+    SpotifyNotifications.sendNotification(
+        t("nowPlaying"),
+        detail?.image ? `data:${getMimeTypeFromBase64(detail.image)};base64,${detail.image}` : "",
+        detail?.title || title,
+        detail?.artist || session.artist,
+        detail?.album || session.album,
+        settings.playSound
+    );
+}
+
 async function getOrFetchDaemonPort(): Promise<string> {
     if (cachedDaemonPort && cachedDaemonPort !== "0") {
         return cachedDaemonPort;
@@ -103,7 +238,13 @@ const getMimeTypeFromBase64 = (base64Str: string): string => {
 let lastTrackId: string | null = null;
 let lastNotificationTime = 0;
 let monitoringTimer: any = null;
+let sessionTimer: any = null;
 let activeSocket: Socket | null = null;
+
+// Per-session notification throttle. A single global pair suppressed notifications as soon as any
+// app started playing, so with two apps up one of them was always silenced; and it could not tell
+// "same track still playing" from "a different app started this track". Keying by session fixes both.
+const notifiedTracks = new Map<string, { trackId: string; time: number }>();
 
 // Auto-fallback and hot recovery variables
 export let isUsingLocalAPI = false;
@@ -141,10 +282,15 @@ export async function startMonitoring() {
         clearInterval(monitoringTimer);
         monitoringTimer = null;
     }
+    if (sessionTimer) {
+        clearInterval(sessionTimer);
+        sessionTimer = null;
+    }
     if (fallbackTimer) {
         clearTimeout(fallbackTimer);
         fallbackTimer = null;
     }
+    setAvailableSessions([]);
 
     const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia";
     const playSound = localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true";
@@ -163,9 +309,7 @@ export async function startMonitoring() {
                     return;
                 }
 
-                const response = await fetch(`http://127.0.0.1:${port}/state`, {
-                    headers: await daemonHeaders()
-                });
+                const response = await daemonFetch(withSession("/state"));
                 if (!response.ok) {
                     if (response.status === 403 && !warnedAbout403) {
                         // The daemon rejects requests whose token does not match its own. That
@@ -202,7 +346,8 @@ export async function startMonitoring() {
                 }
                 
                 const isPlaying = data.status === "Playing";
-                
+                const sessionId = data.session || "";
+
                 const trackInfo = {
                     name: data.title || "Unknown",
                     artist: data.artist || "Unknown Artist",
@@ -216,32 +361,34 @@ export async function startMonitoring() {
                     is_stopped: false,
                     shuffle_state: false,
                     repeat_state: "off",
+                    session_id: sessionId,
+                    app: data.app || "",
                     timestamp: Date.now()
                 };
                 
                 updateTrackState(trackInfo);
                 postToChannel({ type: "TRACK_UPDATE", track: trackInfo });
-                
-                if (isPlaying) {
-                    const now = Date.now();
-                    if (trackInfo.id !== lastTrackId) {
-                        if (now - lastNotificationTime >= minNotificationInterval * 1000) {
-                            lastTrackId = trackInfo.id;
-                            lastNotificationTime = now;
-                            if (!disableNotifications) {
-                                SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
-                            }
-                        }
-                    }
-                }
+
+                // No notification here on purpose: this stream is the widget's, and it only ever
+                // carries the selected session. Notifications come from the session poll, which sees
+                // every app regardless of what the widget is showing.
             } catch (err) {
                 console.error("Error polling Windows Media API:", err);
                 cachedDaemonPort = null;
             }
         };
 
+        // Read once per monitoring run so the throttle logic stays readable.
+        const notificationSettings: NotificationSettings = {
+            disabled: disableNotifications,
+            playSound,
+            minIntervalMs: minNotificationInterval * 1000
+        };
+
         pollWinMedia();
+        pollSessions(notificationSettings);
         monitoringTimer = setInterval(pollWinMedia, 1500);
+        sessionTimer = setInterval(() => pollSessions(notificationSettings), 3000);
         return;
     }
 
@@ -614,16 +761,10 @@ export async function sendPlaybackCommand(command: "play" | "pause" | "next" | "
         console.log(`[Spotify Notifications API] Windows Media Mode - command=${command}`);
         if (command === "play" || command === "pause" || command === "next" || command === "previous") {
             try {
-                const port = await getOrFetchDaemonPort();
-                if (port !== "0") {
-                    const res = await fetch(`http://127.0.0.1:${port}/command?cmd=${command}`, {
-                        method: "POST",
-                        headers: await daemonHeaders()
-                    });
-                    console.log(`[Spotify Notifications API] Windows Media command result status: ${res.status}`);
-                } else {
-                    console.error("[Spotify Notifications API] Daemon port not initialized!");
-                }
+                // The session travels with the command. Without it the daemon picks for itself and
+                // pausing Spotify can end up pausing whatever app the system considers foreground.
+                const response = await daemonFetch(withSession(`/command?cmd=${command}`), { method: "POST" });
+                console.log(`[Spotify Notifications API] Windows Media command ${command} (session=${getPinnedSession() || "auto"}) status: ${response.status}`);
             } catch (err) {
                 console.error("[Spotify Notifications API] Failed to send Windows Media command:", err);
                 cachedDaemonPort = null;
