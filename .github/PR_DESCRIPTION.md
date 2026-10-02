@@ -82,5 +82,10 @@ when Steam updates.
 
 ## Testing
 
-- Steam Client **Stable**: tested.
-- Steam Client **Beta**: not yet tested at the time of submission.
+- Steam Client **Stable**: tested, including a clean install with no prior configuration.
+- Steam Client **Beta**: tested, including a clean install with no prior configuration.
+
+The default Windows Media path was verified end to end: the backend launches the daemon, the
+`port.txt` handshake completes, the background context polls `/state` every 1.5 s, and track
+changes raise Steam toasts. The token rejection cases in the Security section were checked
+against a running daemon rather than by inspection.
