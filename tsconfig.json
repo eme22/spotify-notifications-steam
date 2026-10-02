@@ -1,4 +1,8 @@
 {
+    // This config is the shared base that frontend/tsconfig.json extends. It is not meant to be
+    // run on its own: it omits the frontend's `jsxFactory` override, so compiling frontend/
+    // from here reports spurious "React refers to a UMD global" errors.
+    "exclude": ["node_modules", "frontend", "backend"],
     "compilerOptions": {
         "outDir": ".millennium/Dist",
         "module": "ESNext",

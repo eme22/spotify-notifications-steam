@@ -1,6 +1,6 @@
 node_modules/
-dist/
-.millennium/
+# Anchored: an unanchored `dist/` would also match .millennium/Dist/, which must be committed.
+/dist/
 .vscode/
 pnpm-lock.yaml
 package-lock.json
@@ -8,12 +8,20 @@ yarn.lock
 backend/__pycache__/
 backend/.env
 
+# NOTE: .millennium/ and backend/mediadaemon.exe are intentionally NOT ignored.
+# The PluginDatabase release pipeline (scripts/build/prepare-dist.sh) does not build
+# anything, it only copies files that are committed. It hard-fails with `exit 1` when
+# .millennium/ is missing, and it copies backend/ verbatim, so a missing mediadaemon.exe
+# would ship a plugin whose Windows Media mode can never start.
+# Both are validated by the `verify-artifacts` job in .github/workflows/ci.yml.
+
 # Rust daemon build artifacts
 backend/mediadaemon-rust/target/
-backend/mediadaemon.exe
 backend/mediadaemon.pdb
 backend/media-daemon.log
 
 # Runtime state/command files
 backend/media_state.json
 backend/media_command.txt
+backend/port.txt
+backend/.daemon-dev

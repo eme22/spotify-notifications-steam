@@ -1,0 +1,81 @@
+name: CI
+
+# The PluginDatabase release pipeline (scripts/build/prepare-dist.sh) does not build
+# anything: it only copies files that are already committed. It hard-fails with
+# `exit 1` when .millennium/ is missing, and it copies backend/ verbatim, so a missing
+# or stale backend/mediadaemon.exe ships a broken plugin.
+#
+# Because of that, the two build artifacts are committed to the repository. This job is
+# the guard that keeps them in sync with their sources: if a source change is pushed
+# without rebuilding, the job fails instead of letting a stale artifact reach users.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-artifacts:
+    name: Verify committed build artifacts are up to date
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Rebuild daemon and frontend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location backend/mediadaemon-rust
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+          Pop-Location
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
+
+      - name: Report artifact drift
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Refresh the committed exe in place so the diff below reflects reality.
+          Copy-Item "backend/mediadaemon-rust/target/release/mediadaemon.exe" "backend/mediadaemon.exe" -Force
+
+          # `git diff` misses files that are untracked rather than modified, and
+          # .millennium/ starts out untracked on a fresh clone, so use porcelain status
+          # to catch both cases.
+          $drift = @(git status --porcelain -- backend/mediadaemon.exe .millennium)
+
+          if ($drift.Count -gt 0) {
+            Write-Host "::error::Committed build artifacts are out of date."
+            Write-Host "Rebuild and commit these files before merging:"
+            $drift | ForEach-Object { Write-Host "  - $_" }
+            Write-Host ""
+            Write-Host "  npm run build                                     # refreshes .millennium/"
+            Write-Host "  cargo build --release --manifest-path backend/mediadaemon-rust/Cargo.toml"
+            Write-Host "  copy backend/mediadaemon-rust/target/release/mediadaemon.exe backend/"
+            exit 1
+          }
+
+          Write-Host "Committed build artifacts are up to date."
+
+      - name: Check Rust lints
+        working-directory: backend/mediadaemon-rust
+        run: cargo clippy --all-targets -- -D warnings
