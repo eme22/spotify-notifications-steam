@@ -18,7 +18,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build daemon (release)
-        working-directory: backend/mediadaemon-rust
+        working-directory: mediadaemon-rust
         run: cargo build --release
 
       - name: Set up Node.js

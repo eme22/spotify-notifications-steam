@@ -58,7 +58,7 @@ The token is per-boot, so it is never written to the repository or shipped in co
 - [`tokio`](https://github.com/tokio-rs/tokio), [`axum`](https://github.com/tokio-rs/axum),
   [`serde`](https://github.com/serde-rs/serde), [`rand`](https://github.com/rust-random/rand),
   [`tower-http`](https://github.com/tokio-rs/tower-http) — all MIT/Apache-2.0. The daemon's
-  `Cargo.lock` is committed, and the full notice set is in `backend/mediadaemon-rust/Cargo.lock`.
+  `Cargo.lock` is committed, and the full notice set is in `mediadaemon-rust/Cargo.lock`.
 - [`@steambrew/client`](https://www.npmjs.com/package/@steambrew/client) and
   [`@steambrew/ttc`](https://www.npmjs.com/package/@steambrew/ttc) from Millennium.
 - No paid or external services are required. Spotify is only contacted if the user explicitly

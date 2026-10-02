@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$rustDir = Join-Path $scriptDir "backend\mediadaemon-rust"
+$rustDir = Join-Path $scriptDir "mediadaemon-rust"
 $outputExe = Join-Path $scriptDir "backend\mediadaemon.exe"
 $devMarker = Join-Path $scriptDir "backend\.daemon-dev"
 $logFile = Join-Path $scriptDir "backend\media-daemon.log"

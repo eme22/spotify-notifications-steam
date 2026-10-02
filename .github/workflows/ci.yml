@@ -44,7 +44,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Push-Location backend/mediadaemon-rust
+          Push-Location mediadaemon-rust
           cargo build --release
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
           Pop-Location
@@ -56,7 +56,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           # Refresh the committed exe in place so the diff below reflects reality.
-          Copy-Item "backend/mediadaemon-rust/target/release/mediadaemon.exe" "backend/mediadaemon.exe" -Force
+          Copy-Item "mediadaemon-rust/target/release/mediadaemon.exe" "backend/mediadaemon.exe" -Force
 
           # `git diff` misses files that are untracked rather than modified, and
           # .millennium/ starts out untracked on a fresh clone, so use porcelain status
@@ -69,13 +69,13 @@ jobs:
             $drift | ForEach-Object { Write-Host "  - $_" }
             Write-Host ""
             Write-Host "  npm run build                                     # refreshes .millennium/"
-            Write-Host "  cargo build --release --manifest-path backend/mediadaemon-rust/Cargo.toml"
-            Write-Host "  copy backend/mediadaemon-rust/target/release/mediadaemon.exe backend/"
+            Write-Host "  cargo build --release --manifest-path mediadaemon-rust/Cargo.toml"
+            Write-Host "  copy mediadaemon-rust/target/release/mediadaemon.exe backend/"
             exit 1
           }
 
           Write-Host "Committed build artifacts are up to date."
 
       - name: Check Rust lints
-        working-directory: backend/mediadaemon-rust
+        working-directory: mediadaemon-rust
         run: cargo clippy --all-targets -- -D warnings

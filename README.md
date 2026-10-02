@@ -95,12 +95,14 @@ The other two are opt-in:
 spotify-notifications-steam/
 ├── plugin.json                  # Millennium plugin metadata
 ├── .millennium/Dist/index.js   # Compiled frontend (React)
-├── backend/
+├── backend/                   # Shipped as-is by the release pipeline
 │   ├── main.lua                # LuaJIT backend (entry point)
-│   ├── mediadaemon.exe         # Rust daemon binary
+│   ├── mediadaemon.exe         # Rust daemon binary (committed build output)
 │   ├── .daemon-dev             # Dev mode marker (created by deploy-dev)
-│   ├── mediadaemon-rust/       # Rust source (src/main.rs, http.rs, logs.rs, state.rs, media/)
 │   └── media-daemon.log        # Debug log (dev mode only)
+├── mediadaemon-rust/          # Rust source for the daemon (not shipped)
+│   ├── Cargo.toml
+│   └── src/                    # main.rs, http.rs, logs.rs, state.rs, media/
 ├── frontend/
 │   ├── index.tsx               # React entry — splits on SharedJSContext vs UI
 │   └── src/
@@ -132,6 +134,10 @@ build anything; it only copies files that are already committed. It hard-fails w
 is missing, and it copies `backend/` verbatim, so a missing or stale `mediadaemon.exe` would ship
 a plugin whose Windows Media mode can never start.
 
+That is also why the Rust source lives in `mediadaemon-rust/` at the repository root rather than
+inside `backend/`: the pipeline copies `backend/` whole and has no way to exclude files, so keeping
+the source outside it keeps the published archive down to the binary it actually runs.
+
 The consequence is that **you must rebuild and commit these files whenever you change their
 sources**:
 
@@ -140,9 +146,9 @@ sources**:
 npm run build
 git add .millennium
 
-# After editing anything under backend/mediadaemon-rust/
-cargo build --release --manifest-path backend/mediadaemon-rust/Cargo.toml
-Copy-Item backend/mediadaemon-rust/target/release/mediadaemon.exe backend/
+# After editing anything under mediadaemon-rust/
+cargo build --release --manifest-path mediadaemon-rust/Cargo.toml
+Copy-Item mediadaemon-rust/target/release/mediadaemon.exe backend/
 git add backend/mediadaemon.exe
 ```
 
