@@ -192,13 +192,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" *> $null
+          $tag = "v${{ steps.version.outputs.version }}"
+          gh release view $tag --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
             "exists=true" >> $env:GITHUB_OUTPUT
-            Write-Host "v${{ steps.version.outputs.version }} already exists; nothing to publish."
+            Write-Host "$tag already exists; nothing to publish."
           } else {
             "exists=false" >> $env:GITHUB_OUTPUT
           }
+          # A missing release makes gh exit 1, which would otherwise fail the step.
+          exit 0
 
       - name: Download release.zip
         if: steps.check.outputs.exists == 'false'
