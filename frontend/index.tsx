@@ -35,9 +35,7 @@ export default async function PluginMain() {
                 sendPlaybackCommand(e.data.command, e.data.value);
             } else if (e.data.type === "REQUEST_INITIAL_STATE") {
                 console.debug(`Sending initial track state to new window`);
-                if (currentTrackState) {
-                    postToChannel({ type: "TRACK_UPDATE", track: currentTrackState });
-                }
+                postToChannel({ type: "TRACK_UPDATE", track: currentTrackState });
             } else if (e.data.type === "SETTINGS_UPDATED") {
                 console.log("Settings updated in another window. Restarting monitoring in Main...");
                 stopMonitoring();

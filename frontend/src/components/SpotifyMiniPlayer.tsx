@@ -3,25 +3,19 @@ import ReactDOM from "react-dom/client";
 import { postToChannel, listenToChannel, getPinnedSession, selectSession } from "../services/monitoring";
 import { currentTrackState, onTrackChange } from "../services/state";
 import { STORAGE_KEYS } from "../constants/keys";
+import { STEAM_PLAYER, cn, hasSteamPlayerClasses } from "../constants/steamClasses";
 import { formatTime } from "../utils/helpers";
 import { console } from "../utils/logger";
 import { t } from "../utils/localization";
+import { Dropdown } from "@steambrew/client";
 
 // Re-anchoring thresholds for the seek bar. Deliberately asymmetric.
-//
-// The daemon republishes an age-corrected position on every 1.5s refresh, so what arrives here can
-// be up to one refresh old. That is the normal case, not an error, and treating it as a discrepancy
-// is what produced the visible loop: the bar kept advancing past the stale sample, crossed the
-// threshold, snapped back, and did it again on the next report. Forward drift has a tighter budget
-// because it means the source really did jump (a seek or a new track). Backward drift gets a much
-// looser budget because a stale sample can only ever lag, while a genuine backwards seek is orders
-// of magnitude larger.
 const FORWARD_RESYNC_TOLERANCE_MS = 2500;
 const BACKWARD_RESYNC_TOLERANCE_MS = 5000;
 
 export const SpotifyMiniPlayer: React.FC = () => {
     const [track, setTrack] = useState<any>(currentTrackState);
-    const [isCollapsed, setIsCollapsed] = useState(true);
+    const [isCollapsed, setIsCollapsed] = useState<boolean>(() => localStorage.getItem(STORAGE_KEYS.PLAYER_COLLAPSED) !== "false");
     const [sessions, setSessions] = useState<any[]>([]);
     const [pinned, setPinned] = useState<string>(() => getPinnedSession());
     const [localProgress, setLocalProgress] = useState(0);
@@ -32,12 +26,11 @@ export const SpotifyMiniPlayer: React.FC = () => {
         setLocalProgress(progress);
     };
 
-    // Handle collapse state locally (injected strictly into a single view now)
     const toggleCollapsed = (collapsed: boolean) => {
+        localStorage.setItem(STORAGE_KEYS.PLAYER_COLLAPSED, String(collapsed));
         setIsCollapsed(collapsed);
     };
 
-    // Track state sync (local + broadcast channel)
     useEffect(() => {
         const unsubscribe = onTrackChange((newTrack) => {
             setTrack(newTrack);
@@ -51,14 +44,12 @@ export const SpotifyMiniPlayer: React.FC = () => {
             }
         });
 
-        // React to a selection made in another window (the settings panel, or a second overlay).
         const unsubscribeSelection = listenToChannel((e: MessageEvent) => {
             if (e.data.type === "SESSION_SELECTED") {
                 setPinned(e.data.session || "");
             }
         });
 
-        // Request initial state from main client background process
         console.log(`[Spotify Notifications MiniPlayer] Requesting initial state from backend...`);
         postToChannel({ type: "REQUEST_INITIAL_STATE" });
 
@@ -69,42 +60,36 @@ export const SpotifyMiniPlayer: React.FC = () => {
         };
     }, []);
 
-    /**
-     * Pin the session the player and its buttons act on.
-     *
-     * The pin survives the system reassigning its notion of the "current" session, which is the
-     * whole point: pausing one app used to hand the plugin a different one. It only gives way when
-     * the pinned session stops existing, and then the auto choice takes over until the user picks
-     * again.
-     */
+    // Sync collapsed/expanded across overlay windows (and Steam restarts).
+    useEffect(() => {
+        const onStorage = (e: StorageEvent) => {
+            if (e.key === STORAGE_KEYS.PLAYER_COLLAPSED && e.newValue !== null) {
+                setIsCollapsed(e.newValue !== "false");
+            }
+        };
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+    }, []);
+
+    // Retry initial state while no track has arrived (covers reopening the overlay).
+    useEffect(() => {
+        if (track) return undefined;
+        const id = setInterval(() => postToChannel({ type: "REQUEST_INITIAL_STATE" }), 2000);
+        return () => clearInterval(id);
+    }, [track]);
+
     const handleSelectSession = (sessionId: string) => {
         selectSession(sessionId);
         setPinned(sessionId);
         postToChannel({ type: "SESSION_SELECTED", session: sessionId });
     };
 
-    /**
-     * Which session the selector shows as chosen.
-     *
-     * The user's pin wins whenever it is still usable. Otherwise this follows what the daemon
-     * decided on its own, which is the session that is actually playing rather than whatever the
-     * system considers foreground.
-     *
-     * The empty-pin case has to fall through too: with nothing pinned there is no id to show, and a
-     * `<select>` whose value matches no option silently displays the first one instead, which looks
-     * like the plugin reporting the wrong app.
-     */
     const pinnedIsUsable = !!pinned && sessions.some(session => session.id === pinned);
     const activeSessionId = pinnedIsUsable ? pinned : (track?.session_id || "");
 
-    // Never let the selector's value fall outside its own options: a value with no matching option
-    // makes the control display the first entry, regardless of what is actually playing. The session
-    // being shown is always kept, even if it is stopped, because that is the one the player is on.
     const selectableSessions = (() => {
         const list = sessions.filter(session => session.status !== "Stopped" || session.id === activeSessionId);
         if (activeSessionId && !list.some(session => session.id === activeSessionId)) {
-            // The list has not caught up yet. Show what the player is actually displaying so the
-            // selector agrees with it, rather than the first unrelated session.
             list.unshift({
                 id: activeSessionId,
                 app: track?.app || "",
@@ -116,9 +101,6 @@ export const SpotifyMiniPlayer: React.FC = () => {
         return list;
     })();
 
-    // Drop the pin when its app closes, so the daemon falls back to whatever is playing instead of
-    // reporting nothing. Guarded on a non-empty list: an empty one means the poll failed or has not
-    // landed yet, and clearing on that would silently discard the user's choice.
     useEffect(() => {
         if (!pinned || sessions.length === 0) return;
         if (sessions.some(session => session.id === pinned)) return;
@@ -134,7 +116,6 @@ export const SpotifyMiniPlayer: React.FC = () => {
     const baselineTimeRef = useRef<number>(0);
     const baselineIsPlayingRef = useRef<boolean>(false);
 
-    // Track baseline and process API updates (Reference updates)
     useEffect(() => {
         if (!track) {
             baselineTrackIdRef.current = null;
@@ -150,21 +131,17 @@ export const SpotifyMiniPlayer: React.FC = () => {
         const currentTime = Date.now();
         const currentIsPlaying = track.is_playing || false;
 
-        // The bar must never run past the reported duration, whatever the estimate says.
         const clampToTrack = (value: number) => {
             const duration = track.duration_ms || 0;
             return duration > 0 ? Math.min(value, duration) : value;
         };
 
-        // Re-anchoring is the only thing that moves the displayed position by more than one tick,
-        // so it is the single place that needs to clamp.
         const reanchor = (progress: number, now: number) => {
             baselineProgressRef.current = progress;
             baselineTimeRef.current = now;
             updateLocalProgress(clampToTrack(progress));
         };
 
-        // Detect if this is the first lookup of this song, OR if the playing state changed
         const isFirstLookup = baselineTrackIdRef.current !== currentTrackId;
         const isPlayStateChanged = baselineIsPlayingRef.current !== currentIsPlaying;
 
@@ -178,26 +155,17 @@ export const SpotifyMiniPlayer: React.FC = () => {
         if (isPlayStateChanged) {
             baselineTrackIdRef.current = currentTrackId;
             baselineIsPlayingRef.current = currentIsPlaying;
-
-            // Pause and resume both anchor on the position the backend just reported, which is the
-            // real one. Freezing on the locally predicted value instead left the bar on a guess, and
-            // the next poll then corrected it, so the bar visibly rewound on pause.
             reanchor(currentProgress, currentTime);
             return;
         }
 
         if (!currentIsPlaying) {
-            // Paused: the reported position has stopped moving, so it is the truth rather than a
-            // sample to be filtered. Adopt it directly instead of waiting for it to drift past a
-            // threshold that a frozen position only reaches by the bar over-running it.
             if (currentProgress !== baselineProgressRef.current) {
                 reanchor(currentProgress, currentTime);
             }
             return;
         }
 
-        // Playing: the bar advances locally between reports, so the reported position is compared
-        // against the estimate rather than against the previous baseline.
         const estimatedProgress = baselineProgressRef.current + (currentTime - baselineTimeRef.current);
         const drift = currentProgress - estimatedProgress;
 
@@ -207,7 +175,6 @@ export const SpotifyMiniPlayer: React.FC = () => {
         }
     }, [track]);
 
-    // High-frequency real-time estimated progress renderer
     useEffect(() => {
         if (!track || !track.is_playing) {
             return () => { };
@@ -226,7 +193,6 @@ export const SpotifyMiniPlayer: React.FC = () => {
         return () => clearInterval(interval);
     }, [track?.id, track?.is_playing]);
 
-    // Handle playback commands
     const handleCommand = (command: "play" | "pause" | "next" | "previous" | "shuffle" | "repeat") => {
         console.log(`[Spotify Notifications MiniPlayer] Button clicked: ${command}`);
 
@@ -243,23 +209,24 @@ export const SpotifyMiniPlayer: React.FC = () => {
             }
         }
 
-        // Optimistically update playing state immediately for instant responsive playback visual feedback
         if (command === "play") {
             setTrack((prev: any) => prev ? { ...prev, is_playing: true } : prev);
         } else if (command === "pause") {
             setTrack((prev: any) => prev ? { ...prev, is_playing: false } : prev);
         }
 
-        // Request the main background window (SharedJSContext) to execute the command
         postToChannel({ type: "PLAYBACK_COMMAND", command, value });
     };
+
+    useEffect(() => {
+        if (!hasSteamPlayerClasses()) {
+            console.warn("[Spotify MiniPlayer] Native Steam player classes not found in document stylesheets (Steam build mismatch?).");
+        }
+    }, []);
 
     if (!track) return null;
 
     const progressPercent = track.duration_ms > 0 ? (localProgress / track.duration_ms) * 100 : 0;
-    // SMTC exposes no shuffle or repeat control, so in Windows Media mode these buttons used to
-    // render as always-off and then quietly do nothing when pressed. They are only meaningful when
-    // the Spotify Web API is driving playback, which is the only mode that reports and honours them.
     const supportsShuffleRepeat = (localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia") !== "winmedia";
     const isShuffleActive = supportsShuffleRepeat && track.shuffle_state === true;
     const isRepeatActive = supportsShuffleRepeat && (track.repeat_state === "context" || track.repeat_state === "track");
@@ -283,8 +250,8 @@ export const SpotifyMiniPlayer: React.FC = () => {
 
         const target = e.target as HTMLElement;
         if (
-            target.closest("button") ||            target.closest("select") ||
-            target.closest("option") ||            target.closest(".window-controls") ||
+            target.closest("button") || target.closest("select") ||
+            target.closest("option") || target.closest(".window-controls") ||
             target.closest(".player-progress-container") ||
             target.closest(".player-artist") ||
             target.closest(".player-title")
@@ -315,7 +282,6 @@ export const SpotifyMiniPlayer: React.FC = () => {
             let newX = dragStartRef.current.posX + deltaX;
             let newY = dragStartRef.current.posY + deltaY;
 
-            // Bounding to viewport
             const playerEl = playerRef.current;
             const playerWidth = playerEl?.offsetWidth || 320;
             const playerHeight = playerEl?.offsetHeight || 140;
@@ -358,15 +324,18 @@ export const SpotifyMiniPlayer: React.FC = () => {
         };
     }, [isDragging, position]);
 
+    const fallbackImage = "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg";
+
     return (
         <div
             ref={playerRef}
+            className="spotify-player-root"
             onMouseDown={handleMouseDown}
             style={{
                 position: "fixed",
                 zIndex: 999999,
-                fontFamily: "'Motiva Sans', Arial, Helvetica, sans-serif",
                 userSelect: "none",
+                width: isCollapsed ? "auto" : 320,
                 cursor: !isCollapsed ? (isDragging ? "grabbing" : "grab") : "default",
                 transition: isDragging ? "none" : "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
                 ...(isCollapsed
@@ -379,389 +348,176 @@ export const SpotifyMiniPlayer: React.FC = () => {
             }}
         >
             <style>{`
-                :root {
-                    /* Playback Green accents (Steam's primary brand accent!) */
-                    --player-accent: #90ba3c;
-                }
-
-                .glass-player {
-                    padding: 8px;
-                    width: 320px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-                    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-                    box-sizing: border-box;
-                    position: relative;
-
-                    /* Pure native cross-theme variable chain for background, borders, and radius! */
-                    background: var(--dialog-bg, var(--gpBackground-DarkSoft, var(--DarkGreenBG, var(--GreenBG, rgba(30, 37, 51, 0.98))))) !important;
-                    border: var(--gpBorder-Medium, var(--Outset, 1px solid rgba(255, 255, 255, 0.1))) !important;
-                    border-radius: var(--gpCorner-Large, 0px) !important;
-                    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
-                }
-
-                .player-header {
-                    position: relative;
-                    overflow: hidden;
-                    display: flex;
-                    gap: 10px;
-                    align-items: center;
-                    padding: 2px 4px;
-                }
-
-                .player-avatar-and-user {
-                    display: flex;
-                    gap: 10px;
-                    align-items: center;
-                    width: 100%;
-                    z-index: 1;
-                }
-
-                .player-avatar-holder {
-                    width: 42px;
-                    height: 42px;
-                    min-width: 42px;
-                }
-
-                .player-avatar-img {
-                    width: 100%;
-                    height: 100%;
-                    object-fit: cover;
-                }
-
-                .player-label-holder {
-                    flex: 1;
-                    min-width: 0;
-                    display: flex;
-                    flex-direction: column;
-                    padding-left: 4px;
-                }
-
-                .player-title-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                }
-
-                .player-title {
-                    font-weight: bold;
-                    font-size: 13px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                .player-artist {
-                    color: var(--player-accent);
-                    font-size: 11px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
-                /* Absolute positioned wrapper for themed native close controls */
-                .glass-player .window-controls {
-                    position: absolute !important;
-                    top: 4px !important;
-                    right: 4px !important;
-                    z-index: 10 !important;
-                    display: flex !important;
-                    gap: 4px !important;
-                    padding: 0 !important;
-                    background: transparent !important;
-                    border: none !important;
-                }
-                .glass-player .window-controls .title-area-icon {
-                    cursor: pointer !important;
-                }
-
-                .player-progress-container {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 6px;
-                    padding: 0 4px;
-                }
-
-                .player-progress-track {
-                    height: 4px;
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 2px;
-                    position: relative;
-                    overflow: hidden;
-                }
-
-                .player-progress-bar {
-                    height: 100%;
-                    background: var(--player-accent);
-                    border-radius: 2px;
-                    transition: width 0.1s linear;
-                }
-
-                .player-durations {
-                    display: flex;
-                    justify-content: space-between;
-                    font-size: 10px;
-                    color: var(--text-muted, #a3a3ac);
-                }
-
-                /* Session selector: which app the player and its buttons act on. Shown only when there is
-                       something to choose between, so a single-app setup looks exactly as before. */
-                .player-session-select {
-                    margin-top: 8px;
-                    width: 100%;
-                    background: rgba(0, 0, 0, 0.35);
-                    color: #d6d7d8;
-                    border: 1px solid rgba(255, 255, 255, 0.09);
-                    border-radius: 3px;
-                    padding: 4px 6px;
-                    font-size: 12px;
-                    font-family: 'Motiva Sans', sans-serif;
-                    cursor: pointer;
-                    outline: none;
-                }
-
-                .player-session-select:hover {
-                    background: rgba(0, 0, 0, 0.5);
-                }
-
-                .player-session-select option {
-                    background: #1b2838;
-                    color: #d6d7d8;
-                }
-
-                .player-controls {
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    gap: 10px;
-                    margin-top: 2px;
-                }
-
-                /* Highly specific button selectors to override Steam's native padding/margins and force layout dimensions, 
-                   while leaving background, border-radius, and borders untouched to let custom themes style them natively! */
-                div.friendlist.glass-player button.DialogButton.control-btn {
-                    width: 32px !important;
-                    height: 32px !important;
-                    min-width: 32px !important;
-                    max-width: 32px !important;
-                    display: inline-flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                    padding: 0 !important;
-                    flex-grow: 0 !important;
-                    flex-shrink: 0 !important;
-                    flex: none !important;
-                    box-sizing: border-box !important;
-                    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
-                    cursor: pointer;
-                }
-                div.friendlist.glass-player button.DialogButton.control-btn:hover {
-                    transform: scale(1.08) !important;
-                }
-                div.friendlist.glass-player button.DialogButton.control-btn.active-btn {
-                    color: var(--player-accent) !important;
-                }
-
-                div.friendlist.glass-player button.DialogButton.control-btn-play {
-                    width: 38px !important;
-                    height: 38px !important;
-                    min-width: 38px !important;
-                    max-width: 38px !important;
-                    padding: 0 !important;
-                    flex-grow: 0 !important;
-                    flex-shrink: 0 !important;
-                    flex: none !important;
-                    box-sizing: border-box !important;
-                }
-                div.friendlist.glass-player button.DialogButton.control-btn svg {
-                    width: 14px !important;
-                    height: 14px !important;
-                    display: block !important;
-                }
-                div.friendlist.glass-player button.DialogButton.control-btn-play svg {
-                    width: 18px !important;
-                    height: 18px !important;
-                    color: var(--player-accent) !important; /* Highlights the Play button icon beautifully in standard themes! */
-                }
-
-                .player-collapsed-avatar {
-                    width: 48px;
-                    height: 48px;
-                    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-                    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-                }
-
-                @keyframes slideUp {
-                    from { opacity: 0; transform: translateY(20px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
+                .spotify-player-root { width: 320px; }
+                .spotify-player-root .player-avatar-img { width: 48px; height: 48px; object-fit: cover; display: block; border-radius: 4px; }
+                .spotify-player-root .player-progress-track { height: 4px; background: hsla(0, 0%, 100%, 0.2); border-radius: 2px; position: relative; overflow: hidden; }
+                .spotify-player-root .player-progress-bar { height: 100%; background: hsla(0, 0%, 100%, 0.8); border-radius: 2px; transition: width 0.1s linear; }
+                .spotify-player-root .player-durations { display: flex; justify-content: space-between; font-size: 10px; color: hsla(0, 0%, 100%, 0.7); }
+                .spotify-player-root .player-session-select { margin-top: 8px; width: 100%; }
+                .spotify-player-root .title-area-icon { cursor: pointer; }
+                .spotify-player-root .title-area-icon svg { stroke: currentColor; }
+                .spotify-player-root .DialogButton svg { width: 18px; height: 18px; display: block; }
+                .spotify-player-root .player-play-btn svg { width: 24px; height: 24px; }
+                .spotify-player-root .player-progress-track { flex: 1; }
+                .spotify-player-root .player-collapsed-btn { display: inline-flex; width: auto; min-width: 0; padding: 4px; line-height: 0; }
+                .spotify-player-root .window-controls .title-area-icon { color: inherit; }
+                .spotify-player-root .player-session-picker { width: 100%; }
+                .spotify-player-root .player-session-picker > * { width: 100%; }
+                .spotify-player-root .player-session-picker button { width: 100%; min-width: 0; }
+                .spotify-player-root .player-controls-row { width: 100% !important; align-self: stretch !important; justify-content: center !important; }
+                .spotify-player-root .player-controls { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; gap: 8px; }
+                .spotify-player-root .player-controls-side { flex: 1 1 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
+                .spotify-player-root .player-controls-side.left { justify-content: flex-end; }
+                .spotify-player-root .player-controls-side.right { justify-content: flex-start; }
+                .spotify-player-root .player-controls-center { flex: 0 0 auto; display: flex; }
+                .spotify-player-root .player-controls button { flex: 0 0 36px !important; width: 36px !important; height: 36px !important; min-width: 0 !important; padding: 0 !important; margin: 0 !important; }
+                .spotify-player-root .player-controls .player-play-btn { flex: 0 0 44px !important; width: 44px !important; height: 44px !important; }
+                .spotify-player-root .player-panel { background: var(--aika-overlay-material, var(--fr-panel, var(--main-background, var(--secondary-background, rgba(30, 37, 51, 0.98))))) !important; border-radius: var(--aika-radius-lg, 8px); overflow: hidden; }
             `}</style>
 
             {isCollapsed ? (
-                <div onClick={() => toggleCollapsed(false)} className="friendlist FriendsListContent DialogBody ModalPosition" style={{ cursor: "pointer" }} title={t("miniPlayerOpen")}>
-                    <div className="nibodjvvrm86uCfnnAn4g avatarHolder no-drag Medium ingame player-collapsed-avatar">
-                        <div className="_3xUpb5DWXPFNcHHIcv-9pe avatarStatus"></div>
-                        <img className="_3h-QRJGxnVOIExtHD1R0f2 avatar player-avatar-img" draggable="false" src={track.image_url || "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg"} />
-                    </div>
-                </div>
+                <button
+                    type="button"
+                    className="DialogButton Secondary Focusable player-collapsed-btn"
+                    onClick={() => toggleCollapsed(false)}
+                    title={t("miniPlayerOpen")}
+                >
+                    <img className="player-avatar-img" draggable="false" src={track.image_url || fallbackImage} />
+                </button>
             ) : (
-                <div className="friendlist FriendsListContent DialogBody ModalPosition glass-player">
-                    {/* Upper Header Row styled as a Community Friend Item */}
-                    <div className="currentUserContainer ingame player-header">
-                        <svg className="statusHeaderGlow" width="100%" height="100%" style={{ position: "absolute", top: 0, left: 0, zIndex: 0, opacity: 0.5, pointerEvents: "none" }} xmlns="http://www.w3.org/2000/svg">
-                            <defs>
-                                <radialGradient id="spotifyGreenGlow" cx="20%" cy="30%" r="60%">
-                                    <stop offset="0%" stopColor="#90ba3c" stopOpacity="0.4"></stop>
-                                    <stop offset="100%" stopColor="transparent"></stop>
-                                </radialGradient>
-                            </defs>
-                            <ellipse cx="20%" cy="30%" rx="80%" ry="70%" fill="url(#spotifyGreenGlow)"></ellipse>
-                        </svg>
-
-                        <div className="AvatarAndUser player-avatar-and-user">
-                            <div className="currentUserAvatar">
-                                <div className="nibodjvvrm86uCfnnAn4g avatarHolder no-drag Medium ingame player-avatar-holder">
-                                    <div className="_3xUpb5DWXPFNcHHIcv-9pe avatarStatus"></div>
-                                    <img className="_3h-QRJGxnVOIExtHD1R0f2 avatar player-avatar-img" draggable="false" src={track.image_url || "https://avatars.steamstatic.com/f1fdf8e7465a06c2b1806a448ef27af283afeb29_medium.jpg"} />
-                                </div>
-                            </div>
-
-                            <div className="labelHolder ingame _1BbOegz8bYL7iPzgYpOgQI player-label-holder">
-                                <div className="_4ZTzGZ5TTgFyfw1DcXLXS player-title-row">
-                                    <div className="nOdcT-MoOaXGePXLyPe0H player-title" title={track.name} style={{ marginRight: "32px" }}>
-                                        {track.name}
-                                    </div>
-                                </div>
-                                <div className="_3sxE7F1LV2IcSX68YsH9dI">
-                                    <div className="_1cB0qtF0paHWWyj1XNcnbG _2Ri005Wg_uXDTa71kdRbcN no-drag player-artist" title={track.artist}>
-                                        {track.artist}
-                                    </div>
-                                </div>
-                            </div>
+                <div className={cn(STEAM_PLAYER.overlay, "player-panel")}>
+                    {/* Header row: cover, title, artist, close */}
+                    <div className={STEAM_PLAYER.currentTrackContainer}>
+                        <div className={STEAM_PLAYER.art}>
+                            <img src={track.image_url || fallbackImage} />
+                        </div>
+                        <div className={STEAM_PLAYER.details}>
+                            <div className={STEAM_PLAYER.soundtrackName}>{track.artist}</div>
+                            <div className={STEAM_PLAYER.trackName}>{track.name}</div>
                         </div>
 
-                        {/* Top-Right Themed Window Control Close Button */}
                         <div className="title-bar-actions window-controls">
                             <div className="title-area-icon closeButton windowControlButton" onClick={() => toggleCollapsed(true)} title={t("miniPlayerMinimize")}>
                                 <div className="title-area-icon-inner">
-                                    <svg version="1.1" id="Layer_2" xmlns="http://www.w3.org/2000/svg" className="SVGIcon_Button SVGIcon_X_Line" x="0px" y="0px" width="256px" height="256px" viewBox="0 0 256 256">
-                                        <line fill="none" stroke="#FFFFFF" strokeWidth="45" strokeMiterlimit="10" x1="212" y1="212" x2="44" y2="44"></line>
-                                        <line fill="none" stroke="#FFFFFF" strokeWidth="45" strokeMiterlimit="10" x1="44" y1="212" x2="212" y2="44"></line>
+                                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" className="SVGIcon_Button SVGIcon_X_Line" x="0px" y="0px" width="256px" height="256px" viewBox="0 0 256 256">
+                                        <line fill="none" stroke="currentColor" strokeWidth="45" strokeMiterlimit="10" x1="212" y1="212" x2="44" y2="44"></line>
+                                        <line fill="none" stroke="currentColor" strokeWidth="45" strokeMiterlimit="10" x1="44" y1="212" x2="212" y2="44"></line>
                                     </svg>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* Progress Bar & Durations */}
-                    <div className="player-progress-container">
-                        <div className="player-progress-track">
-                            <div className="player-progress-bar" style={{ width: `${progressPercent}%` }} />
+                    {/* Progress */}
+                    <div className={cn(STEAM_PLAYER.controlBlock, STEAM_PLAYER.compactView)}>
+                        <div className={cn(STEAM_PLAYER.progress, STEAM_PLAYER.compactView)}>
+                            <div className={STEAM_PLAYER.text}>{formatTime(localProgress)}</div>
+                            <div className="player-progress-track">
+                                <div className="player-progress-bar" style={{ width: `${progressPercent}%` }} />
+                            </div>
+                            <div className={STEAM_PLAYER.text}>{formatTime(track.duration_ms)}</div>
                         </div>
-                        <div className="player-durations">
-                            <span>{formatTime(localProgress)}</span>
-                            <span>{formatTime(track.duration_ms)}</span>
+
+                        {/* Controls */}
+                        <div className={cn(STEAM_PLAYER.controlsAndVolume, STEAM_PLAYER.row, "player-controls-row")}>
+                            <div className={cn(STEAM_PLAYER.controls, "player-controls")}>
+                                <div className="player-controls-side left">
+                                    {supportsShuffleRepeat && (
+                                        <button
+                                            type="button"
+                                            className={cn("DialogButton", STEAM_PLAYER.iconButton, isShuffleActive && STEAM_PLAYER.active)}
+                                            onClick={() => handleCommand("shuffle")}
+                                            title={isShuffleActive ? t("shuffleOn") : t("shuffleOff")}
+                                        >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                            <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
+                                        </svg>
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    className={cn("DialogButton", STEAM_PLAYER.iconButton)}
+                                    onClick={() => handleCommand("previous")}
+                                    title={t("prevTrack")}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                        <path fill-rule="evenodd" clip-rule="evenodd" d="M32.013 31.27a1 1 0 0 1-1.499.868L10 20.335V30a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v9.665L30.514 3.862a1 1 0 0 1 1.499.867v26.542Z" fill="currentColor"></path>
+                                    </svg>
+                                </button>
+                                </div>
+                                <div className="player-controls-center">
+                                {track.is_playing ? (
+                                    <button
+                                        type="button"
+                                        className={cn("DialogButton", STEAM_PLAYER.iconButton, STEAM_PLAYER.large, "player-play-btn")}
+                                        onClick={() => handleCommand("pause")}
+                                        title={t("pause")}
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                            <path fill-rule="evenodd" clip-rule="evenodd" d="M6 6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6Zm16 0a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V6Z" fill="currentColor"></path>
+                                        </svg>
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className={cn("DialogButton", STEAM_PLAYER.iconButton, STEAM_PLAYER.large, "player-play-btn")}
+                                        onClick={() => handleCommand("play")}
+                                        title={t("play")}
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                            <path d="M7.5 32.135a1 1 0 0 1-1.5-.866V4.73a1 1 0 0 1 1.5-.866l22.999 13.269a1 1 0 0 1 0 1.732l-23 13.269Z" fill="currentColor"></path>
+                                        </svg>
+                                    </button>
+                                )}
+                                </div>
+                                <div className="player-controls-side right">
+                                <button
+                                    type="button"
+                                    className={cn("DialogButton", STEAM_PLAYER.iconButton)}
+                                    onClick={() => handleCommand("next")}
+                                    title={t("nextTrack")}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                        <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
+                                    </svg>
+                                </button>
+                                {supportsShuffleRepeat && (
+                                    <button
+                                        type="button"
+                                        className={cn("DialogButton", STEAM_PLAYER.iconButton, isRepeatActive && STEAM_PLAYER.active)}
+                                        onClick={() => handleCommand("repeat")}
+                                        title={repeatTitle}
+                                    >
+                                        {track.repeat_state === "track" ? (
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none" style={{ position: "relative" }}>
+                                                <path fillRule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
+                                                <text x="18" y="22" fontFamily="'Motiva Sans', sans-serif" fontSize="9" fontWeight="bold" fill="currentColor" textAnchor="middle">1</text>
+                                            </svg>
+                                        ) : (
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
+                                                <path fill-rule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
+                                            </svg>
+                                        )}
+                                    </button>
+                                )}
+                                </div>
+                            </div>
                         </div>
                     </div>
 
                     {selectableSessions.length > 1 && (
-                        <select
-                            className="player-session-select"
-                            value={activeSessionId}
-                            onChange={(event: React.ChangeEvent<HTMLSelectElement>) => handleSelectSession(event.target.value)}
-                            // The player is draggable, and a mousedown that reaches the drag handler
-                            // is preventDefault()ed, which stops the dropdown from ever opening.
-                            onMouseDown={(event: React.MouseEvent<HTMLSelectElement>) => event.stopPropagation()}
-                            title={t("sessionPicker")}
-                        >
-                            {selectableSessions.map(session => (
-                                <option key={session.id} value={session.id}>
-                                    {session.status === "Playing" ? "● " : "○ "}
-                                    {session.title} — {session.app}
-                                </option>
-                            ))}
-                        </select>
+                        <div className="player-session-picker">
+                            <Dropdown
+                                rgOptions={selectableSessions.map((session) => ({
+                                    data: session.id,
+                                    label: `${session.status === "Playing" ? "● " : "○ "}${session.title} — ${session.app}`
+                                }))}
+                                selectedOption={activeSessionId}
+                                renderButtonValue={() => selectableSessions.find((s) => s.id === activeSessionId)?.title || t("sessionPicker")}
+                                onChange={(opt: any) => handleSelectSession(opt.data)}
+                            />
+                        </div>
                     )}
-
-                    {/* Controls Row */}
-                    <div className="player-controls">
-                        {supportsShuffleRepeat && (
-                        <button
-                            type="button"
-                            className={`DialogButton Secondary Focusable control-btn${isShuffleActive ? ' active-btn' : ''}`}
-                            onClick={() => handleCommand("shuffle")}
-                            title={isShuffleActive ? t("shuffleOn") : t("shuffleOff")}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path fillRule="evenodd" clip-rule="evenodd" d="M2.00023 24.453H4.84442C6.92144 24.453 8.26825 22.9277 9.32331 21.1763L15.3048 11.2448C17.1871 8.11946 19.9271 5.76281 23.5619 5.76281H26.038L26.0379 2L33.9995 8.15498L26.0386 14.3096V10.5472H23.5624C21.5098 10.5472 20.1227 12.0984 19.0835 13.8239L13.1017 23.7561C11.1813 26.9448 8.58909 29.2381 4.84462 29.2381H2.0001L2.00023 24.453ZM2.00023 10.547H4.84442C6.92144 10.547 8.26825 12.0723 9.32331 13.8238L9.86817 14.7281L12.5155 10.3325C10.6604 7.62746 8.22064 5.76215 4.84419 5.76215L2 5.76202L2.00023 10.547ZM26.0384 20.6906V24.453H23.5622C21.5096 24.453 20.1225 22.9018 19.0833 21.1763L18.5385 20.2719L15.8931 24.6641C17.7422 27.3264 20.2893 29.2375 23.5622 29.2375H26.1776L26.0384 33L34 26.8454L26.0384 20.6906Z" fill="currentColor"></path>
-                            </svg>
-                        </button>
-                        )}
-                        <button
-                            type="button"
-                            className="DialogButton Secondary Focusable control-btn"
-                            onClick={() => handleCommand("previous")}
-                            title={t("prevTrack")}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path fill-rule="evenodd" clip-rule="evenodd" d="M32.013 31.27a1 1 0 0 1-1.499.868L10 20.335V30a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v9.665L30.514 3.862a1 1 0 0 1 1.499.867v26.542Z" fill="currentColor"></path>
-                            </svg>
-                        </button>
-                        {track.is_playing ? (
-                            <button
-                                type="button"
-                                className="DialogButton Secondary Focusable control-btn control-btn-play"
-                                onClick={() => handleCommand("pause")}
-                                title={t("pause")}
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M6 6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6Zm16 0a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v24a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V6Z" fill="currentColor"></path>
-                                </svg>
-                            </button>
-                        ) : (
-                            <button
-                                type="button"
-                                className="DialogButton Secondary Focusable control-btn control-btn-play"
-                                onClick={() => handleCommand("play")}
-                                title={t("play")}
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                    <path d="M7.5 32.135a1 1 0 0 1-1.5-.866V4.73a1 1 0 0 1 1.5-.866l22.999 13.269a1 1 0 0 1 0 1.732l-23 13.269Z" fill="currentColor"></path>
-                                </svg>
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            className="DialogButton Secondary Focusable control-btn"
-                            onClick={() => handleCommand("next")}
-                            title={t("nextTrack")}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                <path fill-rule="evenodd" clip-rule="evenodd" d="M4 31.27a1 1 0 0 0 1.499.868l20.514-11.803V30a1 1 0 0 0 1-1h4a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v9.665L5.499 3.862A1 1 0 0 0 4 4.73v26.542Z" fill="currentColor"></path>
-                            </svg>
-                        </button>
-                        {supportsShuffleRepeat && (
-                        <button
-                            type="button"
-                            className={`DialogButton Secondary Focusable control-btn${isRepeatActive ? ' active-btn' : ''}`}
-                            onClick={() => handleCommand("repeat")}
-                            title={repeatTitle}
-                        >
-                            {track.repeat_state === "track" ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none" style={{ position: 'relative' }}>
-                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
-                                    <text x="18" y="22" fontFamily="'Motiva Sans', sans-serif" fontSize="9" fontWeight="bold" fill="currentColor" textAnchor="middle">1</text>
-                                </svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none">
-                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M25.5154 9.89133V13.6514L34 7.53558L25.5154 1V5.17983H9.8247C5.51626 5.17983 2 8.64716 2 12.8957V19.2797H6.77831V12.8957C6.77831 11.2483 8.15372 9.8919 9.82446 9.8919L25.5154 9.89133ZM10.4846 26.5284V22.768L2 28.8842L10.4846 35V31.2399H26.1753C30.4837 31.2399 34 27.7726 34 23.5241V17.1401H29.2217V23.5241C29.2217 25.1714 27.8463 26.5278 26.1755 26.5278L10.4846 26.5284Z" fill="currentColor"></path>
-                                </svg>
-                            )}
-                        </button>
-                        )}
-                    </div>
                 </div>
             )}
         </div>
@@ -769,17 +525,28 @@ export const SpotifyMiniPlayer: React.FC = () => {
 };
 
 // Inject the beautiful floating mini-player into Steam UI DOM inside the target overlay document
+type PlayerContainer = HTMLDivElement & { __spotifyPlayerRoot?: ReactDOM.Root };
+
 export function injectMiniPlayerIntoOverlay(overlayWindow: Window) {
     const overlayDoc = overlayWindow.document;
-    if (overlayDoc.getElementById("spotify-notifications-miniplayer-root")) return;
+    let container = overlayDoc.getElementById("spotify-notifications-miniplayer-root") as PlayerContainer | null;
 
-    const container = overlayDoc.createElement("div");
-    container.id = "spotify-notifications-miniplayer-root";
-    overlayDoc.body.appendChild(container);
+    if (!container) {
+        container = overlayDoc.createElement("div") as PlayerContainer;
+        container.id = "spotify-notifications-miniplayer-root";
+        overlayDoc.body.appendChild(container);
+    }
+
+    if (container.childElementCount > 0) return;
 
     try {
-        const root = ReactDOM.createRoot(container);
-        root.render(<SpotifyMiniPlayer />);
+        if (container.__spotifyPlayerRoot) {
+            container.__spotifyPlayerRoot.render(<SpotifyMiniPlayer />);
+        } else {
+            const root = ReactDOM.createRoot(container);
+            container.__spotifyPlayerRoot = root;
+            root.render(<SpotifyMiniPlayer />);
+        }
         console.debug("Mini-player successfully injected into Game Overlay!");
     } catch (e) {
         console.error("Failed to render mini-player inside overlay window:", e);
@@ -789,7 +556,6 @@ export function injectMiniPlayerIntoOverlay(overlayWindow: Window) {
 // Polling monitor for dynamic overlay detection in the shared context (SharedJSContext)
 export function startOverlayPolling() {
     let lastPopupsKey = "";
-
     const checkOverlay = () => {
         const g_PopupManager = (window as any).g_PopupManager;
         if (!g_PopupManager || !g_PopupManager.m_mapPopups) return;
@@ -833,7 +599,6 @@ export function startOverlayPolling() {
             }
         }
 
-        // Only log when the popup list changes (to keep console clean)
         const currentKey = popupsList.map(p => `${p.name}:${p.isOverlay}`).join("|");
         if (currentKey !== lastPopupsKey) {
             lastPopupsKey = currentKey;
@@ -841,6 +606,5 @@ export function startOverlayPolling() {
         }
     };
 
-    // Poll every 1 second
     setInterval(checkOverlay, 1000);
 }
