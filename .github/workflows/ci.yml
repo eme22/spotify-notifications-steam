@@ -5,13 +5,18 @@ name: CI
 # `exit 1` when .millennium/ is missing, and it copies backend/ verbatim, so a missing
 # or stale backend/mediadaemon.exe ships a broken plugin.
 #
-# Because of that, the two build artifacts are committed to the repository. This job is
-# the guard that keeps them in sync with their sources: if a source change is pushed
+# Because of that, the two build artifacts are committed to the repository. This workflow
+# is the guard that keeps them in sync with their sources: if a source change is pushed
 # without rebuilding, the job fails instead of letting a stale artifact reach users.
+#
+# It also produces release.zip and, whenever plugin.json points at a version that has no
+# GitHub release yet, publishes that zip under the tag v<version>. Bumping the version in
+# plugin.json is therefore all it takes to ship a release.
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -32,13 +37,20 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # pnpm 11 needs Node >= 22.13.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Rebuild daemon and frontend
         shell: pwsh
@@ -48,7 +60,7 @@ jobs:
           cargo build --release
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
           Pop-Location
-          npm run build
+          pnpm build
           if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
 
       - name: Report artifact drift
@@ -68,7 +80,7 @@ jobs:
             Write-Host "Rebuild and commit these files before merging:"
             $drift | ForEach-Object { Write-Host "  - $_" }
             Write-Host ""
-            Write-Host "  npm run build                                     # refreshes .millennium/"
+            Write-Host "  pnpm build                                        # refreshes .millennium/"
             Write-Host "  cargo build --release --manifest-path mediadaemon-rust/Cargo.toml"
             Write-Host "  copy mediadaemon-rust/target/release/mediadaemon.exe backend/"
             exit 1
@@ -79,3 +91,65 @@ jobs:
       - name: Check Rust lints
         working-directory: mediadaemon-rust
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Package release.zip
+        shell: pwsh
+        run: ./package-release.ps1
+
+      - name: Upload release.zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release.zip when the plugin version changes
+    needs: verify-artifacts
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read plugin version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "plugin.json has no version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      # Bumping plugin.json to a version that is already released (or pushing an existing
+      # tag) must not republish, so ask GitHub before doing anything.
+      - name: Check whether v${{ steps.version.outputs.version }} is already released
+        id: check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" >> $env:GITHUB_OUTPUT
+            Write-Host "v${{ steps.version.outputs.version }} already exists; nothing to publish."
+          } else {
+            "exists=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download release.zip
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+
+      - name: Create GitHub release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: dist/release.zip
+          generate_release_notes: true

@@ -21,7 +21,7 @@ account, no API key and no extra service. See [Connection modes](#connection-mod
 cd "C:\Program Files (x86)\Steam\millennium\plugins"
 git clone https://github.com/eme22/spotify-notifications-steam.git
 cd spotify-notifications-steam
-npm install
+pnpm install
 
 # Dev mode — debug logging to backend/media-daemon.log
 .\deploy-dev.ps1
@@ -144,7 +144,7 @@ sources**:
 
 ```powershell
 # After editing anything under frontend/
-npm run build
+pnpm build
 git add .millennium
 
 # After editing anything under mediadaemon-rust/
@@ -155,6 +155,11 @@ git add backend/mediadaemon.exe
 
 The `verify-artifacts` job in `.github/workflows/ci.yml` rebuilds both and fails the build if the
 committed copies are out of date, so a forgotten rebuild cannot silently reach users.
+
+That same workflow builds `release.zip` (see `package-release.ps1`) and uploads it as a build
+artifact on every run. When `plugin.json` is bumped to a version that has no GitHub release yet,
+the `release` job publishes that zip under the tag `v<version>` — so shipping a new version only
+requires committing the version bump together with the rebuilt artifacts.
 
 ---
 
@@ -201,7 +206,7 @@ sends no `Origin` and is therefore unaffected by CORS.
 | Daemon build | `cargo build` (debug) | `cargo build --release` |
 | Log file | `backend/media-daemon.log` (debug level) | None |
 | `.daemon-dev` marker | Created (passes `--dev` flag) | Removed |
-| Frontend | `npm run dev` | `npm run build` |
+| Frontend | `pnpm dev` | `pnpm build` |
 | Lua log forwarding | Info+ from `/logs` → `logger` | Same |
 
 ---

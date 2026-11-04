@@ -1,8 +1,8 @@
 node_modules/
 # Anchored: an unanchored `dist/` would also match .millennium/Dist/, which must be committed.
 /dist/
+/release.zip
 .vscode/
-pnpm-lock.yaml
 package-lock.json
 yarn.lock
 backend/__pycache__/
