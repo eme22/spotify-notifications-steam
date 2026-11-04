@@ -80,6 +80,9 @@ pub fn app_name_for(app_user_model_id: &str) -> String {
     }
 }
 
+// `async_trait` marks the boxed future it generates as `#[must_use]`, which trips
+// `clippy::double_must_use` on methods that already return a `#[must_use]` type.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait MediaProvider: Send + Sync {
     /// Detail for one session, with the cover art.
