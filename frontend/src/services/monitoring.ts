@@ -3,6 +3,18 @@ import { STORAGE_KEYS } from "../constants/keys";
 import { console } from "../utils/logger";
 import { SpotifyNotifications } from "./notifications";
 import { updateTrackState } from "./state";
+import {
+    getNotificationWhen,
+    needsGameDetection,
+    needsSteamDetection,
+    resetGameState,
+    setRegistryInGame,
+    setSteamForeground,
+    shouldNotify,
+    startGameTracking,
+    stopGameTracking,
+    type NotificationWhen
+} from "./gameState";
 import { callable } from "@steambrew/client";
 import { t } from "../utils/localization";
 import { isTokenExpired, refreshAccessToken } from "./auth";
@@ -93,7 +105,7 @@ async function pollSessions(settings: NotificationSettings) {
 }
 
 interface NotificationSettings {
-    disabled: boolean;
+    when: NotificationWhen;
     playSound: boolean;
     minIntervalMs: number;
 }
@@ -106,8 +118,6 @@ interface NotificationSettings {
  * on the transition, and the session list alone is enough to decide whether a notification is due.
  */
 async function maybeNotifySession(session: any, settings: NotificationSettings) {
-    if (settings.disabled) return;
-
     const sessionId = session?.id;
     const title = session?.title;
     if (!sessionId || !title) return;
@@ -115,6 +125,10 @@ async function maybeNotifySession(session: any, settings: NotificationSettings) 
     // Only sessions that are actually playing notify: SMTC keeps a session alive long after its app
     // stopped, and notifying on those would fire for whatever was last heard hours ago.
     if (session.status !== "Playing") return;
+
+    // Check before recording the track so entering an eligible context (for example, starting a
+    // game) can still announce the song that is currently playing.
+    if (!shouldNotify(settings.when)) return;
 
     const trackId = `${session.artist}:${title}`;
     const now = Date.now();
@@ -217,6 +231,38 @@ async function daemonHeaders(): Promise<Record<string, string>> {
     return { [DAEMON_TOKEN_HEADER]: token };
 }
 
+/**
+ * Ask only for the detector the current notification mode needs.
+ *
+ * `need=steam` skips the registry scan; `need=game` skips the foreground query. Modes that do not
+ * use either detector never start these timers at all.
+ */
+async function pollGameState(need: "game" | "steam") {
+    try {
+        const port = await getOrFetchDaemonPort();
+        if (port === "0") return;
+
+        const response = await daemonFetch(`/games?need=${need}`);
+        if (response.status === 403) {
+            // Same stale-handshake case the media poll handles: drop the cached port so the next
+            // poll asks the Lua backend again. In webapi/playback mode nothing else does this.
+            cachedDaemonPort = null;
+            return;
+        }
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (need === "game") {
+            setRegistryInGame(data?.inGame === true);
+        } else {
+            setSteamForeground(data?.steamForeground === true);
+        }
+    } catch (err) {
+        console.error(`Error polling Steam ${need} state:`, err);
+        cachedDaemonPort = null;
+    }
+}
+
 const getMimeTypeFromBase64 = (base64Str: string): string => {
     if (!base64Str) return "image/jpeg";
     const firstChars = base64Str.substring(0, 16);
@@ -239,6 +285,8 @@ let lastTrackId: string | null = null;
 let lastNotificationTime = 0;
 let monitoringTimer: any = null;
 let sessionTimer: any = null;
+let gameTimer: any = null;
+let foregroundTimer: any = null;
 let activeSocket: Socket | null = null;
 
 // Per-session notification throttle. A single global pair suppressed notifications as soon as any
@@ -286,16 +334,39 @@ export async function startMonitoring() {
         clearInterval(sessionTimer);
         sessionTimer = null;
     }
+    if (gameTimer) {
+        clearInterval(gameTimer);
+        gameTimer = null;
+    }
+    if (foregroundTimer) {
+        clearInterval(foregroundTimer);
+        foregroundTimer = null;
+    }
     if (fallbackTimer) {
         clearTimeout(fallbackTimer);
         fallbackTimer = null;
     }
+
+    // A restart may switch notification modes, so discard answers from the previous detectors.
+    stopGameTracking();
+    resetGameState();
     setAvailableSessions([]);
 
     const mode = localStorage.getItem(STORAGE_KEYS.MODE) || "winmedia";
     const playSound = localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true";
     const minNotificationInterval = parseFloat(localStorage.getItem(STORAGE_KEYS.MIN_INTERVAL) || "2.0");
-    const disableNotifications = localStorage.getItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS) === "true";
+    const notificationWhen = getNotificationWhen();
+
+    // Only the detectors the selected mode can use are started. `always` and `none` run none.
+    if (needsGameDetection(notificationWhen)) {
+        startGameTracking();
+        pollGameState("game");
+        gameTimer = setInterval(() => pollGameState("game"), 3000);
+    }
+    if (needsSteamDetection(notificationWhen)) {
+        pollGameState("steam");
+        foregroundTimer = setInterval(() => pollGameState("steam"), 1000);
+    }
 
     if (mode === "winmedia") {
         isUsingLocalAPI = false;
@@ -380,7 +451,7 @@ export async function startMonitoring() {
 
         // Read once per monitoring run so the throttle logic stays readable.
         const notificationSettings: NotificationSettings = {
-            disabled: disableNotifications,
+            when: notificationWhen,
             playSound,
             minIntervalMs: minNotificationInterval * 1000
         };
@@ -432,12 +503,13 @@ export async function startMonitoring() {
         if (data.is_playing) {
             const now = Date.now();
             if (trackInfo.id !== lastTrackId) {
-                if (now - lastNotificationTime >= minNotificationInterval * 1000) {
+                if (
+                    now - lastNotificationTime >= minNotificationInterval * 1000 &&
+                    shouldNotify(notificationWhen)
+                ) {
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    if (!disableNotifications) {
-                        SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
-                    }
+                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
                 }
             }
         }
@@ -695,13 +767,13 @@ export async function startMonitoring() {
                 const requiredDiff = minNotificationInterval * 1000;
                 console.debug(`Notification trigger check: timeDiff=${timeDiff}ms vs requiredDiff=${requiredDiff}ms`);
                 
-                if (timeDiff >= requiredDiff) {
+                if (timeDiff >= requiredDiff && shouldNotify(notificationWhen)) {
                     console.debug(`Triggering 'Now Playing' notification for track: ${trackInfo.name}`);
                     lastTrackId = trackInfo.id;
                     lastNotificationTime = now;
-                    if (!disableNotifications) {
-                        SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
-                    }
+                    SpotifyNotifications.sendNotification(t("nowPlaying"), trackInfo.image_url, trackInfo.name, trackInfo.artist, trackInfo.album, playSound);
+                } else if (timeDiff >= requiredDiff) {
+                    console.debug(`Notification suppressed by visibility mode for track: ${trackInfo.name}`);
                 } else {
                     console.warn(`Notification skipped (throttled): timeDiff=${timeDiff}ms is less than required ${requiredDiff}ms.`);
                 }
@@ -733,10 +805,24 @@ export function stopMonitoring() {
         clearInterval(monitoringTimer);
         monitoringTimer = null;
     }
+    if (sessionTimer) {
+        clearInterval(sessionTimer);
+        sessionTimer = null;
+    }
+    if (gameTimer) {
+        clearInterval(gameTimer);
+        gameTimer = null;
+    }
+    if (foregroundTimer) {
+        clearInterval(foregroundTimer);
+        foregroundTimer = null;
+    }
     if (fallbackTimer) {
         clearTimeout(fallbackTimer);
         fallbackTimer = null;
     }
+    stopGameTracking();
+    resetGameState();
     if (activeSocket) {
         activeSocket.removeAllListeners();
         activeSocket.disconnect();

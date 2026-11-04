@@ -40,6 +40,13 @@ struct SessionQuery {
     session: Option<String>,
 }
 
+/// Which part of the Steam state the caller needs. The frontend only asks for what its selected
+/// notification mode uses, so an unused detector never runs.
+#[derive(Deserialize)]
+struct GamesQuery {
+    need: Option<String>,
+}
+
 /// Origins the Steam client loads the plugin's web context from.
 ///
 /// `https://steamloopback.host` is the verified value: it is the origin Steam's CEF reports for
@@ -161,6 +168,7 @@ pub fn build_router(
             let provider = provider.clone();
             move || get_sessions(provider.clone())
         }))
+        .route("/games", get(get_games))
         .route("/command", post({
             let provider = provider.clone();
             move |query| post_command(query, provider.clone())
@@ -224,6 +232,17 @@ async fn get_sessions(provider: Arc<dyn MediaProvider>) -> (axum::http::StatusCo
         axum::http::StatusCode::OK,
         serde_json::json!({ "sessions": items }).to_string(),
     )
+}
+
+/// `need=steam` skips the registry scan, `need=game` skips the foreground query, and `need=both`
+/// (the default) returns both.
+async fn get_games(query: axum::extract::Query<GamesQuery>) -> (axum::http::StatusCode, String) {
+    let need = query.0.need.as_deref().unwrap_or("both");
+    let state = crate::games::steam_game_state(need != "steam", need != "game");
+    let body = serde_json::to_string(&state).unwrap_or_else(|_| {
+        r#"{"inGame":false,"steamForeground":false,"apps":[]}"#.to_string()
+    });
+    (axum::http::StatusCode::OK, body)
 }
 
 async fn get_logs(log_buffer: LogBuffer) -> (axum::http::StatusCode, String) {

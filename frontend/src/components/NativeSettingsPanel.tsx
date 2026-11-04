@@ -4,11 +4,13 @@ import {
     TextField, 
     SliderField, 
     Dropdown,
-    ButtonItem 
+    DialogButton,
+    DialogButtonPrimary
 } from "@steambrew/client";
 import React, { useState } from "react";
 import { STORAGE_KEYS } from "../constants/keys";
-import { startMonitoring, stopMonitoring, postToChannel } from "../services/monitoring";
+import { getNotificationWhen, type NotificationWhen } from "../services/gameState";
+import { postToChannel } from "../services/monitoring";
 import {
     beginAuthorization,
     exchangeAuthCode,
@@ -23,6 +25,10 @@ export const SpotifySettingsIcon: React.FC = () => (
         <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.565.387-.86.207-2.377-1.454-5.37-1.783-8.893-.982-.336.076-.67-.135-.746-.472-.076-.336.135-.67.472-.746 3.852-.878 7.14-.504 9.822 1.138.295.18.387.565.207.86zm1.226-2.722c-.226.367-.707.487-1.074.26-2.72-1.672-6.87-2.157-10.076-1.183-.412.125-.845-.107-.97-.52-.125-.412.107-.845.52-.97 3.666-1.11 8.24-.57 11.34 1.34.368.226.488.707.26 1.074zm.107-2.828C14.49 8.892 8.7 8.7 5.344 9.72c-.52.157-1.07-.14-1.228-.66-.157-.52.14-1.07.66-1.228 3.864-1.173 10.24-.95 14.18 1.39.468.278.622.885.344 1.353-.278.468-.885.622-1.353.344z"/>
     </svg>
 );
+
+// Native dialog buttons are shrink-to-fit only while their label stays on one line. The panel rows
+// are flex containers, so without this a long translated label wraps into a narrow stacked button.
+const actionButtonStyle: React.CSSProperties = { whiteSpace: "nowrap" };
 
 export const NativeSettingsPanel: React.FC = () => {
     const legacyMigration = migrateLegacyAuth();
@@ -44,9 +50,7 @@ export const NativeSettingsPanel: React.FC = () => {
     const [playSound, setPlaySound] = useState(
         localStorage.getItem(STORAGE_KEYS.PLAY_SOUND) === "true"
     );
-    const [disableNotifications, setDisableNotifications] = useState(
-        localStorage.getItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS) === "true"
-    );
+    const [notificationWhen, setNotificationWhen] = useState<NotificationWhen>(getNotificationWhen());
     const [syncNative, setSyncNative] = useState(
         localStorage.getItem(STORAGE_KEYS.SYNC_NATIVE) !== "false"
     );
@@ -62,15 +66,15 @@ export const NativeSettingsPanel: React.FC = () => {
         localStorage.setItem(STORAGE_KEYS.POLLING_INTERVAL, pollingInterval.toString());
         localStorage.setItem(STORAGE_KEYS.MIN_INTERVAL, minInterval.toString());
         localStorage.setItem(STORAGE_KEYS.PLAY_SOUND, playSound.toString());
-        localStorage.setItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS, disableNotifications.toString());
+        localStorage.setItem(STORAGE_KEYS.NOTIFICATION_WHEN, notificationWhen);
+        // Keep the legacy key in sync so the migration in older builds agrees with this one.
+        localStorage.setItem(STORAGE_KEYS.DISABLE_NOTIFICATIONS, (notificationWhen === "none").toString());
         localStorage.setItem(STORAGE_KEYS.SYNC_NATIVE, syncNative.toString());
         localStorage.setItem(STORAGE_KEYS.SYNC_VOLUME, syncVolume.toString());
 
-        // Restart background monitoring loop
-        stopMonitoring();
-        startMonitoring();
-
-        // Broadcast settings update to other windows
+        // The background window owns the monitoring loop. Restarting it here would create a second
+        // poller in the settings window and fire duplicate notifications while the page is open.
+        // The broadcast makes SharedJSContext reload the settings and restart its own loop.
         postToChannel({ type: "SETTINGS_UPDATED" });
 
         toaster.toast({
@@ -162,7 +166,7 @@ export const NativeSettingsPanel: React.FC = () => {
     const triggerTestNotification = () => {
         SpotifyNotifications.sendNotification(
             t("pluginTitle"),
-            "https://accounts.spotify.com/images/favicon.png",
+            "",
             t("testNotifBody"),
             t("testNotifArtist"),
             t("testNotifAlbum"),
@@ -174,6 +178,14 @@ export const NativeSettingsPanel: React.FC = () => {
         { data: "playback", label: t("modeLocalServer") },
         { data: "webapi", label: t("modeWebApi") },
         { data: "winmedia", label: t("modeWinMedia") }
+    ];
+
+    const notificationWhenOptions = [
+        { data: "always", label: t("notifWhenAlways") },
+        { data: "steam", label: t("notifWhenSteam") },
+        { data: "steam_or_game", label: t("notifWhenSteamOrGame") },
+        { data: "game", label: t("notifWhenGame") },
+        { data: "none", label: t("notifWhenNone") }
     ];
 
     return (
@@ -223,22 +235,22 @@ export const NativeSettingsPanel: React.FC = () => {
                                 {t("authLegacyMigrationWarning")}
                             </div>
                         )}
-                        <ButtonItem onClick={handleAuthenticate} disabled={isLinked}>
+                        <DialogButton onClick={handleAuthenticate} disabled={isLinked} style={actionButtonStyle}>
                             {t("authBtn1")}
-                        </ButtonItem>
+                        </DialogButton>
                         <TextField
                             label={t("authCodeUrl")}
                             description={t("authCodeUrlDesc")}
                             value={authCode}
                             onChange={(e) => setAuthCode(e.target.value)}
                         />
-                        <ButtonItem onClick={handleExchangeCode} disabled={!authCode}>
+                        <DialogButton onClick={handleExchangeCode} disabled={!authCode} style={actionButtonStyle}>
                             {t("authBtn2")}
-                        </ButtonItem>
+                        </DialogButton>
                         {isLinked && (
-                            <ButtonItem onClick={handleDisconnect}>
+                            <DialogButton onClick={handleDisconnect} style={actionButtonStyle}>
                                 {t("authBtnDisconnect")}
-                            </ButtonItem>
+                            </DialogButton>
                         )}
                     </div>
                 </>
@@ -266,12 +278,16 @@ export const NativeSettingsPanel: React.FC = () => {
                 onChange={(val) => setSyncVolume(val)}
             />
 
-            <ToggleField
-                label={t("disableNotifications")}
-                description={t("disableNotificationsDesc")}
-                checked={disableNotifications}
-                onChange={(val) => setDisableNotifications(val)}
-            />
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div style={{ fontSize: "14px", color: "#e1e2e6", fontWeight: 600 }}>{t("notificationWhen")}</div>
+                <div style={{ fontSize: "12px", color: "#a3a3ac", marginBottom: "4px" }}>{t("notificationWhenDesc")}</div>
+                <Dropdown
+                    rgOptions={notificationWhenOptions}
+                    selectedOption={notificationWhen}
+                    renderButtonValue={() => notificationWhenOptions.find(opt => opt.data === notificationWhen)?.label || t("notifWhenAlways")}
+                    onChange={(opt) => setNotificationWhen(opt.data as NotificationWhen)}
+                />
+            </div>
 
             <ToggleField
                 label={t("playSound")}
@@ -307,9 +323,13 @@ export const NativeSettingsPanel: React.FC = () => {
                 </>
             )}
 
-            <div style={{ display: "flex", gap: "12px", marginTop: "10px" }}>
-                <ButtonItem onClick={saveSettings}>{t("saveSettings")}</ButtonItem>
-                <ButtonItem onClick={triggerTestNotification}>{t("testNotification")}</ButtonItem>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "10px" }}>
+                <DialogButtonPrimary onClick={saveSettings} style={actionButtonStyle}>
+                    {t("saveSettings")}
+                </DialogButtonPrimary>
+                <DialogButton onClick={triggerTestNotification} style={actionButtonStyle}>
+                    {t("testNotification")}
+                </DialogButton>
             </div>
         </div>
     );

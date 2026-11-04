@@ -1,3 +1,4 @@
+mod games;
 mod http;
 mod logs;
 mod media;

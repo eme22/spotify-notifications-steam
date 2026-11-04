@@ -111,6 +111,7 @@ spotify-notifications-steam/
 │       │   └── SpotifyMiniPlayer.tsx      # Floating overlay mini-player
 │       ├── services/
 │       │   ├── monitoring.ts   # Poll loop + 3 modes (winmedia/playback/webapi)
+│       │   ├── gameState.ts    # Steam window / running-game detection for notifications
 │       │   ├── notifications.tsx          # Steam toast notifications
 │       │   └── state.ts        # Reactive track state
 │       └── utils/
@@ -186,6 +187,8 @@ sends no `Origin` and is therefore unaffected by CORS.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/state` | GET | Current track JSON (title, artist, album, duration, progress, status, image) |
+| `/sessions` | GET | Every SMTC session without cover art |
+| `/games?need={steam\|game\|both}` | GET | Steam main-window foreground and running-game state (`inGame`, `steamForeground`, `apps`); `need` skips unused detection |
 | `/command?cmd={play\|pause\|next\|previous\|stop}` | POST | Execute playback command; `stop` exits the daemon |
 | `/logs` | GET | Drained buffered info+ log entries (plain text, one per line) |
 
@@ -210,6 +213,21 @@ sends no `Origin` and is therefore unaffected by CORS.
 - **Spotify Web API (webapi)**: OAuth-based Spotify API. See [SPOTIFY_SETUP.md](SPOTIFY_SETUP.md).
 
 Switched in the plugin settings panel inside Steam.
+
+### Notification visibility
+
+The settings panel can restrict “Now Playing” toasts to:
+
+- **Always**
+- **Only with the main Steam window focused**
+- **Main Steam window focused or a game running**
+- **Only while a game is running**
+- **Never**
+
+The running-game check combines Steam's `Apps\<appid>\Running` registry values with
+`SteamClient.GameSessions` lifetime events, so non-Steam shortcuts are covered too. Only the
+detectors used by the selected mode are started. If a detector cannot answer (for example, the
+daemon is unavailable), notifications are allowed rather than silently dropped.
 
 ---
 

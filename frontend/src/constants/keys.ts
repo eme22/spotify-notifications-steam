@@ -15,6 +15,7 @@ export const STORAGE_KEYS = {
     PLAY_SOUND: "spotify_notif_play_sound",
     SYNC_NATIVE: "spotify_notif_sync_native",
     SYNC_VOLUME: "spotify_notif_sync_volume",
-    DISABLE_NOTIFICATIONS: "spotify_notif_disable_notifications",
+    DISABLE_NOTIFICATIONS: "spotify_notif_disable_notifications", // Legacy; migrated to NOTIFICATION_WHEN
+    NOTIFICATION_WHEN: "spotify_notif_notification_when", // always | steam | steam_or_game | game | none
     SESSION: "spotify_notif_session" // SMTC session the user pinned; "" means follow whatever plays
 };
