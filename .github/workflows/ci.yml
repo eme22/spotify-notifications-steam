@@ -63,30 +63,88 @@ jobs:
           pnpm build
           if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
 
-      - name: Report artifact drift
+      # The committed artifacts cannot be compared byte-for-byte against a rebuild:
+      # the Rust binary embeds absolute build paths (CARGO_HOME, workspace dir) and the
+      # JS bundle depends on the bundler's Node version, so two machines always differ.
+      # What actually matters is that nobody changes the sources without refreshing the
+      # artifacts in the same change set, so check the co-change instead.
+      - name: Verify committed artifacts were refreshed with their sources
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # Refresh the committed exe in place so the diff below reflects reality.
-          Copy-Item "mediadaemon-rust/target/release/mediadaemon.exe" "backend/mediadaemon.exe" -Force
 
-          # `git diff` misses files that are untracked rather than modified, and
-          # .millennium/ starts out untracked on a fresh clone, so use porcelain status
-          # to catch both cases.
-          $drift = @(git status --porcelain -- backend/mediadaemon.exe .millennium)
+          if ((git log -1 --format=%B HEAD) -match "\[skip-artifact-check\]") {
+            Write-Host "Skipping the artifact check: [skip-artifact-check] is in the head commit."
+            exit 0
+          }
 
-          if ($drift.Count -gt 0) {
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") {
+            $base = "${{ github.event.pull_request.base.sha }}"
+            $head = "${{ github.event.pull_request.head.sha }}"
+          } else {
+            $base = "${{ github.event.before }}"
+            $head = "${{ github.sha }}"
+          }
+
+          # New branches, manual runs and shallow checkouts may not have those commits.
+          git rev-parse --verify --quiet "$base^{commit}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $base = "HEAD^1"
+            $head = "HEAD"
+            git rev-parse --verify --quiet "$base^{commit}" *> $null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "No parent commit to compare against; skipping the artifact check."
+              exit 0
+            }
+          }
+
+          $changed = @(git diff --name-only $base $head)
+
+          # Only dependency changes affect the bundle; a version bump does not.
+          # Type-only packages are stripped at build time, so ignore them too.
+          function Get-DependencySnapshot([string]$rev) {
+            $raw = git show "${rev}:package.json" 2>$null
+            if ($LASTEXITCODE -ne 0) { return "" }
+            $pkg = $raw | ConvertFrom-Json
+            $lines = foreach ($section in @("dependencies", "devDependencies")) {
+              $deps = $pkg.$section
+              if ($null -eq $deps) { continue }
+              foreach ($prop in $deps.PSObject.Properties) {
+                if ($prop.Name -like "@types/*") { continue }
+                "$section/$($prop.Name)=$($prop.Value)"
+              }
+            }
+            return ((@($lines) | Sort-Object) -join "`n")
+          }
+
+          $bundleInputs = @($changed | Where-Object { $_ -like "frontend/*" })
+          if ((Get-DependencySnapshot $base) -ne (Get-DependencySnapshot $head)) {
+            $bundleInputs += "package.json dependencies"
+          }
+          $daemonInputs = @($changed | Where-Object { $_ -like "mediadaemon-rust/*" })
+
+          $stale = @()
+          if ($bundleInputs.Count -gt 0 -and $changed -notcontains ".millennium/Dist/index.js") {
+            $stale += "frontend sources or dependencies changed, but .millennium/Dist/index.js did not"
+          }
+          if ($daemonInputs.Count -gt 0 -and $changed -notcontains "backend/mediadaemon.exe") {
+            $stale += "mediadaemon-rust changed, but backend/mediadaemon.exe did not"
+          }
+
+          if ($stale.Count -gt 0) {
             Write-Host "::error::Committed build artifacts are out of date."
-            Write-Host "Rebuild and commit these files before merging:"
-            $drift | ForEach-Object { Write-Host "  - $_" }
+            $stale | ForEach-Object { Write-Host "  - $_" }
             Write-Host ""
+            Write-Host "Rebuild and commit the artifacts with the change:"
             Write-Host "  pnpm build                                        # refreshes .millennium/"
             Write-Host "  cargo build --release --manifest-path mediadaemon-rust/Cargo.toml"
             Write-Host "  copy mediadaemon-rust/target/release/mediadaemon.exe backend/"
+            Write-Host ""
+            Write-Host "Add [skip-artifact-check] to the commit message if the rebuild is a no-op."
             exit 1
           }
 
-          Write-Host "Committed build artifacts are up to date."
+          Write-Host "Committed artifacts were refreshed alongside their sources."
 
       - name: Check Rust lints
         working-directory: mediadaemon-rust
@@ -94,7 +152,11 @@ jobs:
 
       - name: Package release.zip
         shell: pwsh
-        run: ./package-release.ps1
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Ship the daemon CI just built, not whatever version is committed.
+          Copy-Item "mediadaemon-rust/target/release/mediadaemon.exe" "backend/mediadaemon.exe" -Force
+          ./package-release.ps1
 
       - name: Upload release.zip
         uses: actions/upload-artifact@v4

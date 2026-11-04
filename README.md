@@ -153,8 +153,12 @@ Copy-Item mediadaemon-rust/target/release/mediadaemon.exe backend/
 git add backend/mediadaemon.exe
 ```
 
-The `verify-artifacts` job in `.github/workflows/ci.yml` rebuilds both and fails the build if the
-committed copies are out of date, so a forgotten rebuild cannot silently reach users.
+The `verify-artifacts` job in `.github/workflows/ci.yml` rebuilds both and fails the build if a
+change touches `frontend/` (or the dependency list) without also updating
+`.millennium/Dist/index.js`, or touches `mediadaemon-rust/` without updating
+`backend/mediadaemon.exe`. It checks the change set rather than the rebuilt bytes, because a
+Windows Rust binary and the bundler output are not byte-reproducible across machines. Add
+`[skip-artifact-check]` to the commit message when a rebuild legitimately produces no change.
 
 That same workflow builds `release.zip` (see `package-release.ps1`) and uploads it as a build
 artifact on every run. When `plugin.json` is bumped to a version that has no GitHub release yet,
